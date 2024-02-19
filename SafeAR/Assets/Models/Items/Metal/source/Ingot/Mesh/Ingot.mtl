@@ -1,0 +1,14 @@
+# Blender MTL File: 'Ingot.blend'
+# Material Count: 1
+
+newmtl Ingot
+Ns 507.168456
+Ka 1.000000 1.000000 1.000000
+Kd 0.194667 0.194667 0.194667
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 3
+map_Bump C:\\Users\\jroma\\Documents\\Custom\\Models\\Ingot\\Textures\\2k\\Ingot_Normal.png
+refl C:\\Users\\jroma\\Documents\\Custom\\Models\\Ingot\\Textures\\2k\\Ingot_Metalness.png

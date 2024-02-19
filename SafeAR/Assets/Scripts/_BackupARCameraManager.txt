@@ -1,0 +1,591 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
+using Unity.Sentis;
+using Unity.Sentis.Layers;
+// using Lay = Unity.Sentis.Layers;
+using UnityEngine;
+
+// using System.IO;
+// using UnityEngine.EventSystems;
+// using UnityEngine.SceneManagement;
+// using Unity.VisualScripting;
+// using UnityEngine.XR.ARCore;
+// using UnityEngine.UI;
+
+// Sentis code: github.com/needle-mirror/com.unity.sentis
+// NMS:  github.com/needle-mirror/com.unity.sentis/blob/2920b2a8f7d12ee55472f51bec4d3b26382ec1a5/Runtime/Core/Layers/Layer.ObjectDetection.cs#L27
+// depth estimmation example: github.com/Unity-Technologies/sentis-samples/blob/ea2c3c5785212acb24f1c3d3e7cb1218d8bedfc8/DepthEstimationSample/Assets/Scripts/InferenceWebcam.cs#L4
+public class ARCameraManager : MonoBehaviour
+{
+    [SerializeField] private GameObject arCamera;
+    [SerializeField] private GameObject arCameraButtonBack;
+    [SerializeField] private GameObject map;
+    [SerializeField] private GameObject player;
+    // [SerializeField] private GameObject playerCamera;
+    // [SerializeField] private Text detectionText;
+
+    public ModelAsset yoloAsset; // The model asset to load 
+    private Model yoloModel;    // The loaded model
+    private IWorker worker;      // The worker to perform inference on the model
+    private Camera arCameraComponent; // The AR camera component
+
+    // TEXTURE: https://github.com/Unity-Technologies/UnityCsReference/blob/master/Runtime/Export/Graphics/Texture.cs
+    [SerializeField] private RenderTexture renderTexture;
+
+
+    private int expectedWidth = 640;
+    private int expectedHeight = 640;
+    Ops ops;   // op to manipulate Tensors (sentis)
+    static BackendType backendType = BackendType.GPUCompute;
+
+    // Start is called before the first frame update
+    void Start()
+    {
+        // --YOLOv8 seg model outputs-----------------------------
+        // output0: (x = 1, y = 116, z = 8400) and output1: (1, 32, 160, 160)
+        // output0: y: 116: 4 (x, y, width, height) + 80 (class probabilities) + 32 (masks)
+        // output0: z: 8400 (detected objects)
+        // -------------------------------------------------------  
+        // output1: (1, m=32, height=160, width=160)
+        // output1: m: 32 (masks)
+        // -------------------------------------------------------
+        //
+        // --What we need-----------------------------------------
+        // 1) Filterout boxes/objects
+        // 2) Retrieve masks, class, and confidence score corresponding to the boxes/objects
+
+        // Slice(output_name:str, input_name:str, starts:str, ends:str, axes:str, steps:str)
+        // var sliceLayerBoxes = new Slice("boxes", "output0", "0", "4", "1", "1");
+        // var sliceLayerBoxes = new Slice(name: "boxes", input: "output0", starts: "0", ends: "4", axes: "1");
+        // var sliceLayerBoxes = new Slice(name: "boxes", input: "output0", starts: "1000", ends: "4", axes: "1");
+        // var sliceLayerMasks = new Slice("mask", "output0", "84", "116", "1", "1");
+        // var sliceLayerProbs = new Slice("probab", "output0", "4", "84", "1", "1");
+        
+        // Create the Reshape output1 layer
+        var newShapeOutput1 = new TensorShape(32, 25600);
+        var reshapeOut1 = new Reshape("rshOutpu1", "output1", "newShapeOutput1");
+        // Create the Reshape masks format 
+        var newShapeMasks = new TensorShape(8400, 32);
+        var reshapeMaks = new Reshape("rshMasks", "sliceLayerMasks", "newShapeMasks");
+        // Create the MatMul layer (we could use the MatMul2D layer instead and avoid transposing the tensors)
+        var matMulLayer = new MatMul("matmul", "rshMasks", "rshOutpu1");
+        // Create the Reshape matmul layer
+        var newShapeMatMul = new TensorShape(1, 160, 160);
+        var reshapeMatMul = new Reshape("rshMatMul", "matmul", "newShapeMatMul");
+
+        yoloModel = ModelLoader.Load(yoloAsset);   // Initialize the YOLO model asset (onnx)
+        var output0 = yoloModel.outputs[0];        // Get the first output of the model
+        var output1 = yoloModel.outputs[1];        // Get the second output of the model
+        
+        // Add the layers to the model 
+        yoloModel.layers.Add(new Slice(name: "boxes",  input: "output0", starts: "0",   ends: "4",   axes: "1"));
+        yoloModel.layers.Add(new Slice(name: "mask",   input: "output0", starts: "84",  ends: "116", axes: "1"));
+        yoloModel.layers.Add(new Slice(name: "probab", input: "output0", starts: "4",   ends: "84",  axes: "1"));
+
+        // NonMaxSuppression(output_name:str, boxes_name:str, scores:str, max_output_boxes_per_class:int, iou_threshold:float, score_threshold:float, centerPointBox:enum)
+        CenterPointBox boxType = CenterPointBox.Center;
+        var nmsLayer = new NonMaxSuppression("nms_output", "boxes", "probab", "100", "0.5", "0.5", boxType); 
+
+        // sliceLayerMasks output dims: (1, 32, 8400) (COEFICIENTES DAS MASCARAS => MULTIPLICAR PELAS MASCARAS)
+        // sliceLayerProbs output dims: (1, 80, 8400) (PROBABILIDADES DAS CLASSES)
+        // sliceLayerBoxes output dims: (1, 4,  8400) (COORDENADAS DOS BOXES)
+
+        yoloModel.layers.Add(nmsLayer);
+        // nmsLayer output: (int)[batch_box1, classID__box1, score_box1, batch_box2, classID__box2, score_box2, ...] //new List<string>() { "nms_output" };
+
+        // Use the nmsList as an index tensor to select the corresponding elements from the maskCoefficients
+        var gatherLayer = new Gather("gatherIdx", "sliceLayerMasks", "nms_output", 2);
+        yoloModel.layers.Add(gatherLayer);   // gatherLayer output: (1, 32, numDetectedObjects) <= Mascaras filtradas aqui
+        yoloModel.layers.Add(reshapeMaks);   // reshapeMaks output: (numDetectedObjects, 32)
+        yoloModel.layers.Add(reshapeOut1);   // reshapeOut1 output: (32, 25600)
+        yoloModel.layers.Add(matMulLayer);   // matMulLayer output: (numDetectedObjects, 25600)
+        yoloModel.layers.Add(reshapeMatMul); // reshape the output of the MatMul layer to (numDetectedObjects, 160, 160)
+
+        // Update model outputs (numDetectedObjects, 160, 160) and nms_output
+        yoloModel.outputs = new List<string>() { "rshMatMul", "nms_output" };
+
+        // print layers details
+        foreach (var layer in yoloModel.layers)
+        {
+            Debug.Log("Layer name: " + layer.name + "Layer: " + layer.ToString());
+        }   
+
+        // Create the worker that will execute the model on the GPU.        
+        worker = WorkerFactory.CreateWorker(backendType, yoloModel);
+        ops = WorkerFactory.CreateOps(backendType, null);
+        
+    }
+
+    // Update is called once per frame
+    void Update()
+    {
+        if (arCamera.activeSelf)
+        {
+            // 1. Capture the current frame and process it.
+            StartCoroutine(CaptureAndProcessFrame());
+            // 2. Get the current frame
+            Texture2D currentFrame = ToTexture2D(renderTexture);
+            // 3. Resize the texture to the expected dimensions
+            Texture2D resizedFrame = ResizeTexture(currentFrame, expectedWidth, expectedHeight);
+            // 4. Convert the texture to a tensor
+            TensorFloat inputTensor = TextureConverter.ToTensor(resizedFrame);
+            inputTensor.MakeReadable();
+            // 5. Execute the model
+            worker.Execute(inputTensor);
+            // 6. Get and process the output
+            Tensor outputTensor = worker.PeekOutput() as Tensor;  // VERIFICAR COMO RESOLVER A QUESTÂO DA LEITURA DO OUTPUT
+
+
+            // ProcessOutput(outputTensor, outputTensor1);
+            // 7. Cleanup
+            Destroy(currentFrame);
+            Destroy(resizedFrame);
+        }
+    }
+
+
+    /// <summary>
+    /// Convert a RenderTexture to a Texture2D.
+    /// </summary>
+    /// <param name="rTex">The RenderTexture.</param>
+    /// <returns>The converted Texture2D.</returns>
+    /// <remarks>
+    Texture2D ToTexture2D(RenderTexture rTex)
+    {
+        Texture2D tex = new Texture2D(rTex.width, rTex.height, TextureFormat.RGB24, false);
+        RenderTexture.active = rTex;
+        tex.ReadPixels(new Rect(0, 0, rTex.width, rTex.height), 0, 0);
+        tex.Apply();
+        return tex;
+    }
+
+    /// <summary>
+    /// Resize a texture to the specified dimensions.
+    /// </summary>
+    /// <param name="originalTexture">The original texture.</param>
+    /// <param name="targetWidth">The target width.</param>
+    /// <param name="targetHeight">The target height.</param>
+    /// <returns>The resized texture.</returns>
+    Texture2D ResizeTexture(Texture2D originalTexture, int targetWidth, int targetHeight)
+    {
+        // Create a temporary RenderTexture of the desired size
+        RenderTexture tempRT = RenderTexture.GetTemporary(
+            targetWidth,
+            targetHeight,
+            0,
+            RenderTextureFormat.Default,
+            RenderTextureReadWrite.Linear);
+
+        // Save the current active RenderTexture
+        RenderTexture previous = RenderTexture.active;
+
+        // Set the temporary RenderTexture as the active RenderTexture
+        RenderTexture.active = tempRT;
+
+        // Blit the original texture to the temporary RenderTexture
+        Graphics.Blit(originalTexture, tempRT);
+
+        // Create a new Texture2D and read the RenderTexture image into it
+        Texture2D result = new Texture2D(targetWidth, targetHeight);
+        result.ReadPixels(new Rect(0, 0, targetWidth, targetHeight), 0, 0);
+        result.Apply();
+
+        // Normalize the pixel values
+        NormalizeTexture(result);
+
+        // Reset the active RenderTexture
+        RenderTexture.active = previous;
+
+        // Release the temporary RenderTexture
+        RenderTexture.ReleaseTemporary(tempRT);
+
+        return result;
+    }
+
+    void NormalizeTexture(Texture2D texture)
+    {
+        var pixels = texture.GetPixels();
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            pixels[i] = new Color(pixels[i].r / 255f, pixels[i].g / 255f, pixels[i].b / 255f, pixels[i].a / 255f);
+        }
+        texture.SetPixels(pixels);
+        texture.Apply();
+    }
+    /// <summary>
+    /// Capture the current frame and process it.
+    /// </summary>
+    IEnumerator CaptureAndProcessFrame()
+    {
+        yield return new WaitForEndOfFrame();
+
+        GameObject cameraGameObject = GameObject.Find("Main Camera AR");
+            if (cameraGameObject)
+            {
+                arCameraComponent = cameraGameObject.GetComponent<Camera>();
+                if (arCameraComponent)
+                {
+                    renderTexture = new RenderTexture(arCameraComponent.pixelWidth, arCameraComponent.pixelHeight, 24);
+                    // Debug.Log("AR Camera On. Camera name: " + arCameraComponent.name);
+                    // Debug.Log("RenderTexture set. Width: " + renderTexture.width + ", Height: " + renderTexture.height);
+                    var previousRT = RenderTexture.active;
+                    RenderTexture.active = renderTexture;
+                    arCameraComponent.targetTexture = renderTexture;
+                    arCameraComponent.Render();
+                    arCameraComponent.targetTexture = null;
+                    RenderTexture.active = previousRT;
+                }
+                else
+                {
+                    Debug.LogError("Camera component not found on 'Main Camera AR'.");
+                }
+            }
+            else
+            {
+                Debug.LogError("'Main Camera AR' not found in the scene.");
+            }
+    }
+
+    // private List<BoundingBox> ParseBoundingBoxes(Tensor tensor)
+    // {
+    //     var boxes = new List<BoundingBox>();
+    //     // Assuming each row in the tensor represents a bounding box
+    //     // Format: [x, y, width, height, score, ...]
+        
+    //     for (int i = 0; i < tensor.shape / 6; i++)
+    //     {
+    //         float x = tensor[i, 0];
+    //         float y = tensor[i, 1];
+    //         float width = tensor[i, 2];
+    //         float height = tensor[i, 3];
+    //         boxes.Add(new BoundingBox(x, y, width, height));
+    //     }
+    //     return boxes; // x, y, width, height
+    // }
+    
+    // private List<float> ParseScores(Tensor tensor)
+    // {
+    //     var scores = new List<float>();
+    //     // Assuming the score is the 5th element in each bounding box row
+    //     for (int i = 0; i < tensor.length / 6; i++)
+    //     {
+    //         scores.Add(tensor[i, 4]);
+    //     }
+    //     return scores;
+    // }
+    
+    // private List<int> ParseClasses(Tensor tensor)
+    // {
+    //     var classes = new List<int>();
+    //     // Assuming each row in the tensor represents class probabilities
+    //     // The index of the maximum value is the class index
+    //     for (int i = 0; i < tensor.length; i++)
+    //     {
+    //         classes.Add(tensor[i].ArgMax());
+    //     }
+    //     return classes;
+    // }
+    
+    private List<T> FilterByIndices<T>(List<T> list, List<int> indices)
+    {
+        return indices.Select(index => list[index]).ToList();
+    }
+    
+    // Define a simple bounding box structure
+    public struct BoundingBox
+    {
+        public float X, Y, Width, Height;
+    
+        public BoundingBox(float x, float y, float width, float height)
+        {
+            X = x;
+            Y = y;
+            Width = width;
+            Height = height;
+        }
+    }
+    /// <summary>
+    /// Process the output tensors from the neural network.
+    /// </summary>
+    /// <param name="output_0">The first output tensor.</param>
+    /// <param name="output_1">The second output tensor.</param>
+    private void ProcessOutput(Tensor output_0, Tensor output_1)
+    {
+        // Make both tensors readable
+        output_0.MakeReadable(); // output_0: (1, 116, 8400)
+        output_1.MakeReadable(); // output_1: (1, 32, 160, 160)
+        // Debug.Log("output_0 type: " + output_0.GetType());
+
+        // ------------------------
+        // Non-maximum suppression 
+        // ------------------------
+        // Parse the output tensors to extract bounding boxes, scores, and classes
+        // You need to know the output format of Yolov8 to do this correctly
+        // Example (modify according to your model's output format):
+
+
+    }
+
+        // _____________________________________________________________
+        
+        // // Create a tensor to store the boxes and masks 
+        // Tensor boxes = ops.Split(output_0, 1, 0, 84);
+        // // Debug.Log("boxes shape: " + boxes.shape);
+        // Tensor masks = ops.Split(output_0, 1, 84, 116);
+        // // Debug.Log("masks shape: " + masks.shape);
+        // // Transpose masks and reshape to (8400, 32)
+        // masks = ops.Transpose(masks, new int[] { 0, 2, 1 });
+        // // Debug.Log("masks shape after transpose: " + masks.shape);
+        // masks = ops.Reshape(masks, new TensorShape(8400, 32));
+        // // Debug.Log("masks shape after reshape: " + masks.shape);
+        // boxes = ops.Transpose(boxes, new int[] { 0, 2, 1 });
+        // boxes = ops.Reshape(boxes, new TensorShape(8400, 84));
+        
+        // // output_1 reshape to (32, 160*160)
+        // Tensor output_1_reshaped = ops.Reshape(output_1, new TensorShape(32, 25600));
+        // // Debug.Log("output_1_reshaped shape: " + output_1_reshaped.shape);
+        
+        // // convert output_1_reshaped and masks to TensorFloat
+        // TensorFloat output_1_tensor = output_1_reshaped as TensorFloat;
+        // TensorFloat masksTensor = masks as TensorFloat;
+
+        // // Matrix multiplication (mask * output_1_reshaped)
+        // Tensor masksResult = ops.MatMul(masksTensor, output_1_tensor);
+        // // Debug.Log("masksResult shape: " + masksResult.shape); // (8400, 25600)
+        // // Debug.Log("masksResult type: " + masksResult.GetType());
+        
+        // // Concatenate boxes and masks along column axis
+        // // Tensor boxes_total = ops.Concat(new Tensor[] {boxes, masksResult}, axis: 1);
+
+        // int batchSize = 100; // Adjust this value based on your available GPU memory
+        // int numBatches = (int)Math.Ceiling((double)boxes.shape[0] / batchSize); 
+        // Debug.Log("numBatches: " + numBatches);
+
+        // Tensor[] boxes_total_batches = new Tensor[numBatches];
+
+        // for (int i = 0; i < numBatches; i++)
+        // {
+        //     int start = i * batchSize;
+        //     int size = Math.Min(batchSize, boxes.shape[0] - start);
+        //     Tensor boxes_batch = ops.Slice(boxes, new int[] {start, 0}, new int[] {size, boxes.shape[1]}, new int[] {0, 1}, new int[] {1, 1});
+        //     Tensor masksResult_batch = ops.Slice(masksResult, new int[] {start, 0}, new int[] {size, masksResult.shape[1]}, new int[] {0, 1}, new int[] {1, 1});
+        //     boxes_total_batches[i] = ops.Concat(new Tensor[] {boxes_batch, masksResult_batch}, axis: 1);
+        // }
+
+        // Tensor boxes_total = ops.Concat(boxes_total_batches, axis: 0);
+        // Debug.Log("boxes_total.shape: " + boxes_total.shape); // (8400, 25632)
+        // Debug.Log("boxes_total_batches.shape: " + boxes_total_batches[0].shape); // (84, 1000, 25632)
+
+        // Transpose output_0 and squeeze the first dimension => (1, 116, 8400) -> (1, 8400, 116)
+        // output_0 = ops.Transpose(output_0, new int[] { 0, 2, 1 });
+        // Tensor output_0_reshaped = ops.Reshape(output_0, new TensorShape(8400, 116));
+        
+        // Debug.Log("output_0_reshaped shape: " + output_0_reshaped.shape); // (8400, 116)
+
+        // convert output_0_reshaped to TensorFloat
+        //TensorFloat output_0_tensor = new TensorFloat(output_0_reshaped.shape, output_0_reshaped.ToReadOnlyArray());
+        
+    
+        // Select specific columns from output_0
+        // int numRows = output_0.shape[1];
+        // // Debug.Log("numRows: " + numRows); // 116
+        // int numColsBoxes = 84;
+        // int numColsMasks = output_0.shape[1] - numColsBoxes; // 116 - 84 = 32
+
+        // Debug.Log("numColsMasks: " + numColsMasks);
+
+        // _____________________________________________________________
+        
+    // }
+
+    /* private void ProcessOutput(TensorFloat outputBoxes, TensorFloat outputMasks)
+    {
+        // Make both tensors readable
+        outputBoxes.MakeReadable();
+        outputMasks.MakeReadable();
+
+        // Process the bounding boxes
+        float[] boxValues = outputBoxes.ToReadOnlyArray();
+        int numberOfBoxes = boxValues.Length / 8400; // Adjust this based on your model
+        Debug.Log("Number of boxes: " + numberOfBoxes);
+        string resultText = "";
+
+        for (int i = 0; i < numberOfBoxes; i++)
+        {
+            // Extract bounding box attributes
+            float[] box = ExtractBox(boxValues, i, 84); // Adjust this based on your model
+
+            // Process class probabilities
+            float objectnessScore = box[4];
+            if (objectnessScore > 0.5f) 
+            {
+                float bestClassScore = 0f;
+                int bestClassIndex = -1;
+                for (int j = 5; j < 84; j++) // Adjust this based on your model
+                {
+                    float classScore = box[j];
+                    Debug.Log("Class score: " + classScore);
+                    if (classScore > bestClassScore)
+                    {
+                        bestClassScore = classScore;
+                        bestClassIndex = j - 5;
+                    }
+                }
+
+                if (bestClassScore > 0.5f) // Thresholds
+                {
+                    string label = GetLabelForClassIndex(bestClassIndex);
+                    //Debug.Log($"Box {i}: {label}, Score: {bestClassScore}, X: {centerX}, Y: {centerY}, Width: {width}, Height: {height}");
+                    resultText += $"{label}: {bestClassScore}, {bestClassIndex}\n";
+                    // Add code here to overlay bounding box and label on the AR scene
+                    // This could include transforming box coordinates to screen space, drawing rectangles, etc.
+                }
+            }
+        }
+        detectionText.text = resultText;
+    } */
+
+    /* private void ProcessOutput(TensorFloat output, ref int startY, int chunkSize)
+    {
+        output.MakeReadable();
+        // Get the dimensions of the output tensor
+        int batch = output.shape[0];
+        int depth = output.shape[1];
+        int height = output.shape[2];
+        int width = output.shape[3];
+        string resultText = "";
+
+        int endY = Mathf.Min(startY + chunkSize, height); // Define the end row for this chunk
+
+        // Process only a chunk of rows per frame
+        for (int y = startY; y < endY; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                // Initialize variables to store the best class index and its score
+                int bestClassIndex = -1;
+                float bestClassScore = 0f;
+
+                for (int c = 0; c < depth; c++)
+                {
+                    float classScore = output[0, c, y, x]; // Accessing the tensor value
+
+                    if (classScore > bestClassScore)
+                    {
+                        bestClassScore = classScore;
+                        bestClassIndex = c;
+                    }
+                }
+
+                if (bestClassScore > 0.5f) // Adjust threshold as needed
+                {
+                    string label = GetLabelForClassIndex(bestClassIndex);
+                    resultText += $"{label}: {bestClassScore}\n";
+                }
+            }
+        }
+
+        detectionText.text = resultText;
+
+        // Update startY for the next frame
+        startY = endY;
+        if (startY >= height)
+        {
+            startY = 0; // Reset to start from the beginning in the next frame
+        }
+    } */
+
+    private string GetLabelForClassIndex(int classIndex)
+    {
+        //Debug.Log("Class index: " + classIndex);
+        // Implement this method to map class indices to human-readable labels
+        // Example:
+        switch (classIndex)
+        {
+            case 0: return "Person";
+            case 1: return "Bicycle";
+            // Add cases for other class indices
+            default: return "Unknown";
+        }
+    }
+
+    private float[] ExtractBox(float[] boxValues, int index, int boxSize)
+    {
+        float[] box = new float[boxSize];
+        Array.Copy(boxValues, index * 8400, box, 0, boxSize);
+        return box;
+    }
+
+    public void ARCameraOn()
+    {
+
+        arCamera.SetActive(!arCamera.activeSelf);
+        if (arCamera.activeSelf)
+        {
+            // Find the AR camera each time in case the hierarchy changes
+            GameObject cameraGameObject = GameObject.Find("Main Camera AR");
+            if (cameraGameObject)
+            {
+                arCameraComponent = cameraGameObject.GetComponent<Camera>();
+                if (arCameraComponent)
+                {
+                    //arCameraComponent.depth = 0;
+                    Debug.Log("AR Camera On. Camera name: " + arCameraComponent.name);
+                    Debug.Log("RenderTexture set. Width: " + renderTexture.width + ", Height: " + renderTexture.height);
+                }
+                else
+                {
+                    Debug.LogError("Camera component not found on 'Main Camera AR'.");
+                }
+            }
+            else
+            {
+                Debug.LogError("'Main Camera AR' not found in the scene.");
+            }
+            
+            //rawImage.texture = renderTexture;
+            
+            Debug.Log("AR Camera On");
+            arCameraButtonBack.SetActive(true);
+            map.SetActive(false);
+            player.SetActive(false);
+            //camTexture.Play();
+        }
+        else
+        {
+            //set rawImage to false
+            //rawImage.enabled = false;
+            arCameraButtonBack.SetActive(false);
+            map.SetActive(true);
+            player.SetActive(true);
+            //camTexture.Stop();
+        }
+        //SceneManager.LoadScene("ARCamera");
+    }
+
+    public void BackToMap()
+    {
+        arCamera.SetActive(false);
+        arCameraButtonBack.SetActive(false);
+        map.SetActive(true);
+        player.SetActive(true);
+        //rawImage.enabled = false;
+        //camTexture.Stop();
+        //SceneManager.LoadScene("World");
+    }
+
+    void OnDestroy()
+    {
+        worker.Dispose();
+        if (arCamera != null)
+        {
+            arCameraComponent.targetTexture = null;
+        }
+        if (renderTexture != null)
+        {
+            renderTexture.Release();
+        }
+    }
+}
