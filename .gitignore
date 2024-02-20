@@ -442,6 +442,7 @@ SafeAR/UpgradeLog.htm
 SafeAR/LootAR.nuspec
 SafeAR/.editorconfig
 SafeAR/.vsconfig
+SafeAR/UnityPlayer.so
 
 .consulo/
 *.csproj
@@ -456,3 +457,10 @@ SafeAR/.vsconfig
 *.aab
 *.unitypackage
 *.app
+
+*.mp4
+
+SafeAR/.config
+SafeAR/.vscode
+SafeAR/Temp
+SafeAR/_build

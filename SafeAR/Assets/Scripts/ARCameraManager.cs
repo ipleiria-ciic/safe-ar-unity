@@ -68,15 +68,17 @@ public class ARCameraManager : MonoBehaviour
         // var imgPath = Application.dataPath + "/Test_Images/test_img2_full_size.png";
         // currentFrame = ImgUtils.LoadTextureFromImage(imagePath: imgPath);
         
-        // --------------------------------------------------------------------------------
-        // Obfuscation Definition. Options: Masking, Pixelation, Blurring or None 
-        // --------------------------------------------------------------------------------
+        // ---------------------------------------------------------------------
+        // Obfuscation Mapping: dict. with {class_id, Obfuscation.Type} format
+        // Options: Masking, Pixelation, Blurring or None 
+        // We can add pixelSize, blurSize, and maskColor and alpha as parameters
+        // ---------------------------------------------------------------------
         obfuscationTypes = new Dictionary<int, Obfuscation.Type>
         {
-            {0, Obfuscation.Type.Masking},  // person
-            {1, Obfuscation.Type.Masking},  // bicycle
-            {53, Obfuscation.Type.Masking}, // pizza
-            {67, Obfuscation.Type.Masking}, // cell phone
+            {0, Obfuscation.Type.Masking},     // person
+            {1, Obfuscation.Type.Masking},     // bicycle
+            {53, Obfuscation.Type.Pixelation}, // pizza
+            {67, Obfuscation.Type.Blurring},   // cell phone
         };
 
         StartCoroutine(CaptureAndProcessFrame());
@@ -92,7 +94,7 @@ public class ARCameraManager : MonoBehaviour
     {
         StartCoroutine(CaptureAndProcessFrame()); 
 		currentFrame = ToTexture2D(renderTexture);
-        Debug.Log("currentFrame.width: " + currentFrame.width + ", currentFrame.height: " + currentFrame.height);
+        // Debug.Log("currentFrame.width: " + currentFrame.width + ", currentFrame.height: " + currentFrame.height);
         // currentFrame.width: 241, currentFrame.height: 340
 
         // ---------------------
@@ -115,7 +117,8 @@ public class ARCameraManager : MonoBehaviour
             Destroy(outputTexture);
             outputTexture = null;
         }
-        outputTexture = imageObfuscator.Run(currentFrame, obfuscationTypes);
+        outputTexture = imageObfuscator.Run(inputTexture: currentFrame, 
+                                            classObfuscationTypes: obfuscationTypes);
 
         // Bypass the obfuscator (Test Only)
         //outputTexture = currentFrame;
@@ -202,79 +205,10 @@ public class ARCameraManager : MonoBehaviour
             outputTexture = imageObfuscator.Run(currentFrame, obfuscationTypes);
 
             // Wait for a short delay before capturing the next frame
-            yield return new WaitForSeconds(0.1f);
+            yield return new WaitForSeconds(0.01f);
         }
     }
 
-
-    // /// <summary>
-    // /// Activate the AR camera.
-    // /// </summary>
-    // void ARCameraOn()
-    // {
-    //     arCamera.SetActive(!arCamera.activeSelf);
-    //     if (arCamera.activeSelf)
-    //     {
-    //         // Find the AR camera each time in case the hierarchy changes
-    //         GameObject cameraGameObject = GameObject.Find("Main Camera AR");
-    //         if (cameraGameObject)
-    //         {
-    //             arCameraComponent = cameraGameObject.GetComponent<Camera>();
-    //             if (arCameraComponent)
-    //             {
-    //                 //arCameraComponent.depth = 0;
-    //                 Debug.Log("AR Camera On. Camera name: " + arCameraComponent.name);
-    //                 Debug.Log("RenderTexture set. Width: " + renderTexture.width + ", Height: " + renderTexture.height);
-    //             }
-    //             else
-    //             {
-    //                 Debug.LogError("Camera component not found on 'Main Camera AR'.");
-    //             }
-    //         }
-    //         else
-    //         {
-    //             Debug.LogError("'Main Camera AR' not found in the scene.");
-    //         }
-
-    //         //rawImage.texture = renderTexture;
-
-    //         Debug.Log("AR Camera On");
-    //         arCameraButtonBack.SetActive(true);
-    //         map.SetActive(false);
-    //         player.SetActive(false);
-    //         //camTexture.Play();
-    //     }
-    //     else
-    //     {
-    //         //set rawImage to false
-    //         //rawImage.enabled = false;
-    //         arCameraButtonBack.SetActive(false);
-    //         map.SetActive(true);
-    //         player.SetActive(true);
-    //         //camTexture.Stop();
-    //     }
-    //     //SceneManager.LoadScene("ARCamera");
-    // }
-
-    void BackToMap()
-    {
-        arCamera.SetActive(false);
-        arCameraButtonBack.SetActive(false);
-        map.SetActive(true);
-        player.SetActive(true);
-        //rawImage.enabled = false;
-        //camTexture.Stop();
-        //SceneManager.LoadScene("World");
-    }
-
-    // void OnDestroy()
-    // {
-    //     renderTexture?.Release();
-    //     if (arCamera != null)
-    //     {
-    //         arCameraComponent.targetTexture = null;
-    //     }
-    // }
 
     /// <summary>
     /// Called when the script is disabled or when the script is being destroyed.
@@ -305,4 +239,13 @@ public class ARCameraManager : MonoBehaviour
             currentFrame = null;
         }
     }
+
+    // void OnDestroy()
+    // {
+    //     renderTexture?.Release();
+    //     if (arCamera != null)
+    //     {
+    //         arCameraComponent.targetTexture = null;
+    //     }
+    // }
 }

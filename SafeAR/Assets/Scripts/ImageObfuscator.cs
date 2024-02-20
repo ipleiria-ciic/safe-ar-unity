@@ -4,7 +4,9 @@ using System.Collections.Generic;
 using Unity.Sentis;
 using UnityEngine;
 using Color = UnityEngine.Color;
-
+// Profiling
+using DebugSD = System.Diagnostics.Debug;
+using Stopwatch = System.Diagnostics.Stopwatch;
 
 public static class Obfuscation
 {
@@ -31,6 +33,10 @@ public class ImageObfuscator : MonoBehaviour
     private static readonly int yoloInputSize = 640;
     public static Unity.Sentis.DeviceType deviceType;
     private Dictionary<int, string> labels;
+
+    // Debug variables
+    readonly int numRuns = 10;
+    double totalTime = 0;
 
     ///<summary>
     /// In the Start method, the device type is determined based on the graphics device type.
@@ -59,10 +65,10 @@ public class ImageObfuscator : MonoBehaviour
         {
             Debug.LogError("Worker is null after initialization");
         }
-        else
-        {
-            Debug.Log("Worker initialized");
-        }
+        // else
+        // {
+        //     Debug.Log("Worker initialized");
+        // }
         labels = ParseNames(Yolov8Model);
     }
 
@@ -260,39 +266,47 @@ public class ImageObfuscator : MonoBehaviour
                 }
             }
         }
-
         return mask;
     }
 
     /// <summary>
-    /// Returns a string representation of the detection result.
+    /// Obfuscates the image based on the detected objects.
     /// </summary>
+    /// <param name="inputTexture">The input image</param>
+    /// <param name="classObfuscationTypes">The dictionary of obfuscation types for each class</param>
+    /// <param name="pixelSize">The pixel size for pixelation</param>
+    /// <returns>The obfuscated image</returns>
     public Texture2D Run(Texture2D inputTexture, Dictionary<int, Obfuscation.Type> classObfuscationTypes, int pixelSize = 16)
     {
+        // Initialize the unspecified classes to None
         InitUnspecifiedClassToNone(classObfuscationTypes);
 
-        var inputTextureRz = ResizeTexture(inputTexture, yoloInputSize, yoloInputSize);
-        Debug.Log("inputTextureRz width: " + inputTextureRz.width + ", height: " + inputTextureRz.height + ", format: " + inputTextureRz.format);
-        Debug.Log("inputTexture width: " + inputTexture.width + ", height: " + inputTexture.height + ", format: " + inputTexture.format);
+        // Resize the input texture to the YOLOv8 input size
+        Texture2D  inputTextureRz = ResizeTexture(inputTexture, yoloInputSize, yoloInputSize);
 
         // Texture2D inputTxtrRzNrm = TextureNormalize(inputTextureRz);
-
-        var inputTensor = TextureConverter.ToTensor(inputTextureRz);
+     
+        // Convert the Texture2D to Tensor and make it readable
+        TensorFloat inputTensor = TextureConverter.ToTensor(inputTextureRz);
         inputTensor.MakeReadable();
 
-        // Convert the Texture2D to Tensor
-        // TensorFloat inputTensor = TextureConverter.ToTensor(inputTexture);
+        // Execute the YOLOv8 model
         worker.Execute(inputTensor);
-        // worker.ExecuteAsync(inputTensor).ContinueWith(_ => OnModelExecuted());
+
         var output0 = worker.PeekOutput("output0");
         var output1 = worker.PeekOutput("output1");
-        var detections = ParseOutputs(output0, output1);
 
+        // (??) worker.ExecuteAsync(inputTensor).ContinueWith(_ => OnModelExecuted());
+
+        // Parse the outputs of the YOLOv8 model
+        List<DetectionOutput0> detections = ParseOutputs(output0, output1);
+
+        // Process the mask information
         ProcessMask(detections, output1, inputTexture.height, inputTexture.width);
-        var outputTexture = ObfuscateImage(inputTexture, detections, classObfuscationTypes, pixelSize);
 
-        // output0.Dispose();
-        // output1.Dispose();
+        // Obfuscate the image based on the detected objects
+        Texture2D outputTexture = ObfuscateImage(inputTexture, detections, classObfuscationTypes, pixelSize);
+
 
         // DEBUG: Print the detections
         // ---------------------------
@@ -307,18 +321,14 @@ public class ImageObfuscator : MonoBehaviour
         output0.Dispose();
         output1.Dispose();
 
+
         return outputTexture;
     }
 
     
-    /// <summary>
-    /// Parses the outputs of the YOLOv8 model, 
-    /// performs Non-Maximum Suppression (NMS) to eliminate overlapping bounding boxes, 
-    /// and processes the detection mask information.
-    /// </summary>
     private static List<DetectionOutput0> ParseOutputs(Tensor output0, Tensor output1, float scoreThres = 0.25f, float iouThres = 0.5f)
     {
-        var outputWidth = output0.shape[2]; // detected objects: 8400
+        var outputWidth = output0.shape[2];                       // detected objects: 8400
         var classCount = output0.shape[1] - output1.shape[1] - 4; // 80 classes: CoCo dataset
 
         List<DetectionOutput0> candidateDetects = new();
@@ -327,60 +337,171 @@ public class ImageObfuscator : MonoBehaviour
         for (var i = 0; i < outputWidth; i++)
         {
             var result = new DetectionOutput0(output0, i, classCount);
-            if (result.Score < scoreThres)
+            if (result.Score >= scoreThres)
             {
-                continue;
+                candidateDetects.Add(result);
             }
-            candidateDetects.Add(result);
         }
 
         // Non-Maximum Suppression (NMS)
         while (candidateDetects.Count > 0)
         {
-            var idx = 0;
-            var maxScore = 0.0f;
-            for (var i = 0; i < candidateDetects.Count; i++)
+            var maxScore = float.MinValue;
+            DetectionOutput0 maxDetection = null;
+
+            foreach (var detection in candidateDetects)
             {
-                if (candidateDetects[i].Score > maxScore)
+                if (detection.Score > maxScore)
                 {
-                    idx = i;
-                    maxScore = candidateDetects[i].Score;
+                    maxScore = detection.Score;
+                    maxDetection = detection;
                 }
             }
-            // Obtain the detection with the highest score
-            var cand = candidateDetects[idx];
-            candidateDetects.RemoveAt(idx);
 
-            // Add the detection to the list of detections
-            detects.Add(cand);
-            List<int> deletes = new();
-            for (var i = 0; i < candidateDetects.Count; i++)
+            detects.Add(maxDetection);
+            candidateDetects.Remove(maxDetection);
+
+            var deletes = new List<DetectionOutput0>();
+            foreach (var detection in candidateDetects)
             {
-                var iou = Iou(cand, candidateDetects[i]);
-                //float iou = ImgUtils.Iou(cand, candidateDetects[i]);
+                var iou = Iou(maxDetection, detection);
                 if (iou >= iouThres)
                 {
-                    deletes.Add(i);
+                    deletes.Add(detection);
                 }
             }
-            for (var i = deletes.Count - 1; i >= 0; i--)
+
+            foreach (var detection in deletes)
             {
-                candidateDetects.RemoveAt(deletes[i]);
+                candidateDetects.Remove(detection);
             }
         }
-
-        // DEBUG
-        // -----
-        // Debug.Log("inputHeight: " + inputHeight);
-        // Debug.Log("inputWidth: " + inputWidth);
-        // ProcessMask(detects, output1, 640, 640);
 
         return detects;
     }
 
+
     /// <summary>
-    /// Represents the result of a detection.
+    /// Parses the outputs of the YOLOv8 model, 
+    /// performs Non-Maximum Suppression (NMS) to eliminate overlapping bounding boxes, 
+    /// and processes the detection mask information.
     /// </summary>
+    // private static List<DetectionOutput0> ParseOutputs(Tensor output0, Tensor output1, float scoreThres = 0.25f, float iouThres = 0.5f)
+    // {
+    //     var outputWidth = output0.shape[2]; // detected objects: 8400
+    //     var classCount = output0.shape[1] - output1.shape[1] - 4; // 80 classes: CoCo dataset
+
+    //     List<DetectionOutput0> candidateDetects = new();
+    //     List<DetectionOutput0> detects = new();
+
+    //     for (var i = 0; i < outputWidth; i++)
+    //     {
+    //         var result = new DetectionOutput0(output0, i, classCount);
+    //         if (result.Score < scoreThres)
+    //         {
+    //             continue;
+    //         }
+    //         candidateDetects.Add(result);
+    //     }
+
+    //     // Non-Maximum Suppression (NMS)
+    //     while (candidateDetects.Count > 0)
+    //     {
+    //         var idx = 0;
+    //         var maxScore = 0.0f;
+    //         for (var i = 0; i < candidateDetects.Count; i++)
+    //         {
+    //             if (candidateDetects[i].Score > maxScore)
+    //             {
+    //                 idx = i;
+    //                 maxScore = candidateDetects[i].Score;
+    //             }
+    //         }
+    //         // Obtain the detection with the highest score
+    //         var cand = candidateDetects[idx];
+    //         candidateDetects.RemoveAt(idx);
+
+    //         // Add the detection to the list of detections
+    //         detects.Add(cand);
+    //         List<int> deletes = new();
+    //         for (var i = 0; i < candidateDetects.Count; i++)
+    //         {
+    //             var iou = Iou(cand, candidateDetects[i]);
+    //             //float iou = ImgUtils.Iou(cand, candidateDetects[i]);
+    //             if (iou >= iouThres)
+    //             {
+    //                 deletes.Add(i);
+    //             }
+    //         }
+    //         for (var i = deletes.Count - 1; i >= 0; i--)
+    //         {
+    //             candidateDetects.RemoveAt(deletes[i]);
+    //         }
+    //     }
+
+    //     // DEBUG
+    //     // -----
+    //     // Debug.Log("inputHeight: " + inputHeight);
+    //     // Debug.Log("inputWidth: " + inputWidth);
+    //     // ProcessMask(detects, output1, 640, 640);
+
+    //     return detects;
+    // }
+
+    // /// <summary>
+    // /// Represents the result of a detection.
+    // /// </summary>
+    // public class DetectionOutput0
+    // {
+    //     public float X1 { get; private set; }
+    //     public float Y1 { get; private set; }
+    //     public float X2 { get; private set; }
+    //     public float Y2 { get; private set; }
+    //     public int ClassID { get; private set; }
+    //     public float Score { get; private set; }
+    //     public bool[,] MaskMatrix { get; set; }
+    //     public List<float> Masks = new();
+
+    //     /// <summary>
+    //     /// Represents the result of an object detection. 
+    //     /// xywh to x1y1x2y2 conversion is done here.
+    //     /// </summary>
+    //     /// <param name="output0_">The tensor containing the detection results.</param>
+    //     /// <param name="idx">The index of the detection result.</param>
+    //     /// <param name="classCount">The number of classes in the detection model.</param>
+    //     public DetectionOutput0(Tensor output0_, int idx, int classCount)
+    //     {
+    //         output0_.MakeReadable();
+    //         var output0T = output0_ as TensorFloat;
+
+    //         // BBox Convention for YOLOv8: x_min, y_min, w, h (origin: top-left)
+    //         var halfWidth = output0T[0, 2, idx] / 2;
+    //         var halfHeight = output0T[0, 3, idx] / 2;
+
+    //         (X1, Y1) = (output0T[0, 0, idx] - halfWidth, output0T[0, 1, idx] - halfHeight);
+    //         (X2, Y2) = (output0T[0, 0, idx] + halfWidth, output0T[0, 1, idx] + halfHeight);
+
+    //         var highestScoreSoFar = 0f;
+
+    //         for (var classIndex = 0; classIndex < classCount; classIndex++)
+    //         {
+    //             var currentClassScore = output0T[0, classIndex + 4, idx];
+    //             if (currentClassScore < highestScoreSoFar)
+    //             {
+    //                 continue;
+    //             }
+    //             ClassID = classIndex;
+    //             highestScoreSoFar = currentClassScore;
+    //         }
+    //         Score = highestScoreSoFar;
+
+    //         for (var i = classCount + 4; i < output0T.shape[1]; i++)
+    //         {
+    //             Masks.Add(output0T[0, i, idx]); // Store the mask info for later use
+    //         }
+    //     }
+    // }
+
     public class DetectionOutput0
     {
         public float X1 { get; private set; }
@@ -390,32 +511,24 @@ public class ImageObfuscator : MonoBehaviour
         public int ClassID { get; private set; }
         public float Score { get; private set; }
         public bool[,] MaskMatrix { get; set; }
-        public List<float> Masks = new();
+        public List<float> Masks = new List<float>();
 
-        /// <summary>
-        /// Represents the result of an object detection. 
-        /// xywh to x1y1x2y2 conversion is done here.
-        /// </summary>
-        /// <param name="output0_">The tensor containing the detection results.</param>
-        /// <param name="idx">The index of the detection result.</param>
-        /// <param name="classCount">The number of classes in the detection model.</param>
         public DetectionOutput0(Tensor output0_, int idx, int classCount)
         {
-            output0_.MakeReadable();
             var output0T = output0_ as TensorFloat;
 
             // BBox Convention for YOLOv8: x_min, y_min, w, h (origin: top-left)
-            var halfWidth = output0T[0, 2, idx] / 2;
-            var halfHeight = output0T[0, 3, idx] / 2;
+            var halfWidth = output0T[0,  2, idx] /  2;
+            var halfHeight = output0T[0,  3, idx] /  2;
 
-            (X1, Y1) = (output0T[0, 0, idx] - halfWidth, output0T[0, 1, idx] - halfHeight);
-            (X2, Y2) = (output0T[0, 0, idx] + halfWidth, output0T[0, 1, idx] + halfHeight);
+            (X1, Y1) = (output0T[0,  0, idx] - halfWidth, output0T[0,  1, idx] - halfHeight);
+            (X2, Y2) = (output0T[0,  0, idx] + halfWidth, output0T[0,  1, idx] + halfHeight);
 
-            var highestScoreSoFar = 0f;
+            var highestScoreSoFar =  0f;
 
-            for (var classIndex = 0; classIndex < classCount; classIndex++)
+            for (var classIndex =  0; classIndex < classCount; classIndex++)
             {
-                var currentClassScore = output0T[0, classIndex + 4, idx];
+                var currentClassScore = output0T[0, classIndex +  4, idx];
                 if (currentClassScore < highestScoreSoFar)
                 {
                     continue;
@@ -425,12 +538,14 @@ public class ImageObfuscator : MonoBehaviour
             }
             Score = highestScoreSoFar;
 
-            for (var i = classCount + 4; i < output0T.shape[1]; i++)
+            Masks.Clear(); // Reuse the existing list
+            for (var i = classCount +  4; i < output0T.shape[1]; i++)
             {
                 Masks.Add(output0T[0, i, idx]); // Store the mask info for later use
             }
         }
     }
+
 
     /// <summary>
     /// Draws a bounding box on the texture.
@@ -545,17 +660,20 @@ public class ImageObfuscator : MonoBehaviour
     /// <param name="detections">The list of detection results</param>
     /// <param name="classObfuscationTypes">The dictionary of obfuscation types for each class</param>
     /// <returns>The obfuscated image, the same dimennsions as inputImage</returns>
-    private Texture2D ObfuscateImage(Texture2D inputImage, List<DetectionOutput0> detections, Dictionary<int, Obfuscation.Type> classObfuscationTypes, int pixelSize = 4, int blurSize = 5, bool DrawBBoxes = false)
+    private Texture2D ObfuscateImage(Texture2D inputImage, List<DetectionOutput0> detections, Dictionary<int, Obfuscation.Type> classObfuscationTypes, int pixelSize = 4, int blurSize = 5, bool DrawBBoxes = true)
     {
         // Create a copy of the input image
         Texture2D outputImage = new(inputImage.width, inputImage.height);
         outputImage.SetPixels(inputImage.GetPixels());
         outputImage.Apply();
+
+        // Calculate the scale factors
         var scaleX = (float)outputImage.width / yoloInputSize;
         var scaleY = (float)outputImage.height / yoloInputSize;
 
         foreach (var detect in detections)
-        {
+        {   
+            // Calculate the new coordinates based on the scale factors
             var newX1 = (int)(detect.X1 * scaleX);
             var newY1 = (int)(detect.Y1 * scaleY);
             var newX2 = (int)(detect.X2 * scaleX);

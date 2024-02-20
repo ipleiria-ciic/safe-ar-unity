@@ -144,7 +144,9 @@ public static class ImgUtils
     }
 
     /// <summary>
-    /// Converts a Texture2D to a byte array
+    /// Blurs the texture with the given mask. 
+    /// Mean or box blur: averages the color values of each pixel with 
+    /// the values of its neighboring pixels within a defined radiu
     /// </summary>
     /// <param name="texture">The texture to be converted</param>
     /// <param name="mask">The mask defining the area to be blurred</param>
@@ -234,6 +236,14 @@ public static class ImgUtils
     //     }
     // }
 
+
+    /// <summary>
+    /// Pixelates the texture with the given mask
+    /// </summary>
+    /// <param name="texture">The texture to be pixelated</param>
+    /// <param name="mask">The mask defining the area to be pixelated</param>
+    /// <param name="pixelSize">The size of the pixelation area</param>
+    /// <returns>The pixelated texture</returns>
     public static void PixelateTexture(Texture2D texture, bool[,] mask, int pixelSize)
     {
         int width = texture.width;

@@ -25,7 +25,7 @@ public static class DataManager
         if (File.Exists(path))
         {
             string json = File.ReadAllText(path);
-            Debug.Log("Loaded json: " + json);
+            // Debug.Log("Loaded json: " + json);
             PlayerData playerData = JsonConvert.DeserializeObject<PlayerData>(json);
             return playerData;
         }
