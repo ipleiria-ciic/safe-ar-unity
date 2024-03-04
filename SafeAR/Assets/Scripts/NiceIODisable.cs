@@ -1,10 +1,12 @@
 using Unity.VisualScripting;
-using UnityEditor;
 using UnityEngine;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 public class NiceIODisable : MonoBehaviour
 {
-
+#if UNITY_EDITOR
     [InitializeOnEnterPlayMode]
     public static void DisableCodebaseWarnings()
     {
@@ -12,4 +14,5 @@ public class NiceIODisable : MonoBehaviour
         var _ = Codebase.assemblies;
         Debug.unityLogger.logEnabled = true;
     }
+#endif
 }

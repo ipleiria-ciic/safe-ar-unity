@@ -163,6 +163,7 @@ PlayerSettings:
   androidMaxAspectRatio: 2.1
   applicationIdentifier:
     Android: com.DefaultCompany.LootAR
+    Standalone: com.DefaultCompany.LootAR
   buildNumber:
     Standalone: 0
     VisionOS: 0
@@ -287,7 +288,7 @@ PlayerSettings:
   - m_BuildTarget: 
     m_Icons:
     - serializedVersion: 2
-      m_Icon: {fileID: 2800000, guid: dbeba9b68c01fdb4aa3a67cab39ce4a7, type: 3}
+      m_Icon: {fileID: 2800000, guid: b77d1adb50656b84f976716e59a42692, type: 3}
       m_Width: 128
       m_Height: 128
       m_Kind: 0
@@ -868,7 +869,7 @@ PlayerSettings:
     tvOS: 1
   incrementalIl2cppBuild: {}
   suppressCommonWarnings: 1
-  allowUnsafeCode: 0
+  allowUnsafeCode: 1
   useDeterministicCompilation: 1
   additionalIl2CppArgs: 
   scriptingRuntimeVersion: 1

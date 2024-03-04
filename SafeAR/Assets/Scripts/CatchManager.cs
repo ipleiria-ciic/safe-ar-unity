@@ -73,8 +73,6 @@ public class CatchManager : MonoBehaviour
         cannotCatchItemText.text = "You are too far away to catch " + selectedItem.GetItemName + "! Get closer to the item!";
     }
     
-        
-
     public void DismissCannotCatchScreen()
     {
         if (cannotCatchScreen.activeSelf)

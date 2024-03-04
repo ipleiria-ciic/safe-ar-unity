@@ -457,6 +457,7 @@ SafeAR/UnityPlayer.so
 *.aab
 *.unitypackage
 *.app
+*.onnx
 
 *.mp4
 
@@ -464,3 +465,10 @@ SafeAR/.config
 SafeAR/.vscode
 SafeAR/Temp
 SafeAR/_build
+SafeAR/Assets/Samples
+SafeAR/Assets/DEBUG_IMGS
+SafeAR/Assets/OpenCV+Unity
+SafeAR/Assets/MathPlus
+
+
+My_project

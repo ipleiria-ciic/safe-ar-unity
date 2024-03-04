@@ -3,7 +3,7 @@
     "m_SelectedPackage": {
         "deviceId": "R58R914CTQZ",
         "name": "com.DefaultCompany.LootAR",
-        "processId": 8361,
+        "processId": 1415,
         "exited": false
     },
     "m_SelectedPriority": 0,
@@ -12,6 +12,18 @@
             "deviceId": "R58R914CTQZ",
             "name": "com.DefaultCompany.LootAR",
             "processId": 8361,
+            "exited": false
+        },
+        {
+            "deviceId": "R58R914CTQZ",
+            "name": "com.DefaultCompany.LootAR",
+            "processId": 1415,
+            "exited": false
+        },
+        {
+            "deviceId": "433acfef",
+            "name": "com.mi.android.globalFileexplorer",
+            "processId": 6858,
             "exited": false
         }
     ],
