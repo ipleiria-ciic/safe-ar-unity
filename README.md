@@ -10,7 +10,7 @@ supported are blurring, pixelation, and masking.
 </p>
 <p align="center">Overall Schematic of Image Obfuscation System</p>
 
-Note: Include Input and output formats
+*(Note: Include Input and output formats)*
 
 ## Image Obfuscator Integration Guide for Unity
 
