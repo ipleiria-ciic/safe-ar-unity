@@ -17,7 +17,6 @@ supported are blurring, pixelation, and masking.
 
 **TO DO: Adapt tensors readability for GPU backend!**
 
-
 ## Image Obfuscator Integration Guide for Unity
 
 This guide explains how to integrate and configure the Image Obfuscator module into your Unity project. The Image Obfuscator is designed to apply obfuscation effects to specific classes or objects within an image, such as masking, pixelation, blurring, or no obfuscation.

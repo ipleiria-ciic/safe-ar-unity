@@ -41,6 +41,7 @@ public class ImgObfuscator : MonoBehaviour
     private static readonly int ttlDtts = 8400;
     private Dictionary<int, string> labels;
 
+
     // [Header("Debug Text")]
     // public Text debugText;
 
@@ -273,6 +274,16 @@ public class ImgObfuscator : MonoBehaviour
         TensorFloat selectedMasks = ops.Gather(masks, boxIDsFlat, 0) as TensorFloat;
         // Debug.Log("selectedMasks shape: " + selectedMasks.shape);
 
+        // --- SIMILARITY SCORE ------------------------------------------------
+
+        // float similarityScore = SimilarityScore(
+        //     boxCoords: boxCoords,
+        //     labelIDs: labelIDs
+        // );
+
+        // --- SIMILARITY SCORE ------------------------------------------------
+
+
         // stopwatch8.Stop();
         // Debug.Log("P_8) Gather ops: " + stopwatch8.ElapsedMilliseconds + " ms");
         // stopwatch8.Reset();
@@ -413,6 +424,8 @@ public class ImgObfuscator : MonoBehaviour
         // labelIDs.Dispose();
         // selectedMasks.Dispose();
         // inputTensor.Dispose();
+
+        Texture2D lastOutTxtr = outTxtr;
 
         return outTxtr;
     }

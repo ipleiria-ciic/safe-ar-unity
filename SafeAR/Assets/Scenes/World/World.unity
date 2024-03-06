@@ -4915,7 +4915,7 @@ GameObject:
   - component: {fileID: 1158215735}
   - component: {fileID: 1158215737}
   - component: {fileID: 1158215736}
-  m_Layer: 0
+  m_Layer: 3
   m_Name: ImageUI
   m_TagString: Untagged
   m_Icon: {fileID: 0}

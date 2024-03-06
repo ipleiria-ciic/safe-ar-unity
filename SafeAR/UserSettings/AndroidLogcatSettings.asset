@@ -3,7 +3,7 @@
     "m_SelectedPackage": {
         "deviceId": "R58R914CTQZ",
         "name": "com.DefaultCompany.LootAR",
-        "processId": 1415,
+        "processId": 15085,
         "exited": false
     },
     "m_SelectedPriority": 0,
@@ -18,6 +18,12 @@
             "deviceId": "R58R914CTQZ",
             "name": "com.DefaultCompany.LootAR",
             "processId": 1415,
+            "exited": false
+        },
+        {
+            "deviceId": "R58R914CTQZ",
+            "name": "com.DefaultCompany.LootAR",
+            "processId": 15085,
             "exited": false
         },
         {

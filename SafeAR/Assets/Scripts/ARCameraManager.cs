@@ -60,10 +60,17 @@ public class ARCameraManager : MonoBehaviour
         // AR Camera Initialization
         // ------------------------
 
-        GameObject xrOrigin = GameObject.Find("XR Origin"); // It must be ACTIVE to get the camera component !!!
-        Transform cameraOffset = xrOrigin.transform.Find("Camera Offset");
-        Transform mainCameraAR = cameraOffset.Find("Main Camera AR");
-        arCameraComponent = mainCameraAR.GetComponent<Camera>();
+        // GameObject xrOrigin = GameObject.Find("XR Origin"); // It must be ACTIVE to get the camera component !!!
+        // Transform cameraOffset = xrOrigin.transform.Find("Camera Offset");
+        // Transform mainCameraAR = cameraOffset.Find("Main Camera AR");
+        // arCameraComponent = mainCameraAR.GetComponent<Camera>();
+
+        // ---------------------------
+        // Dummy Camera Initialization
+        // ---------------------------
+
+        GameObject dummyCamera = GameObject.Find("DummyCam");
+        arCameraComponent = dummyCamera.GetComponent<Camera>();
 
         renderTexture = RenderTexture.GetTemporary(
             arCameraComponent.pixelWidth,
