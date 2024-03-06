@@ -5,9 +5,10 @@ model for object detection. The system is designed to detect objects in images
 and apply obfuscation techniques to them. The obfuscation techniques currently 
 supported are blurring, pixelation, and masking.
 
-![Placeholder Image](https://via.placeholder.com/350)
+<p align="center">
+  <img src="https://via.placeholder.com/350" alt="Placeholder Image">
+</p>
 <p align="center">Overall Schematic of Image Obfuscation System</p>
-
 
 Note: Include Input and output formats
 
@@ -28,7 +29,8 @@ Follow these steps to integrate the Image Obfuscator into your Unity project:
    Sprite.
 
    ```csharp
-   [SerializeField] private UnityEngine.UI.Image imageUI; // Image to project Sprite (Unity Editor)
+   // Image to project Sprite (Unity Editor)
+   [SerializeField] private UnityEngine.UI.Image imageUI; 
     ```
 
 #### Configure Obfuscation Mapping:
