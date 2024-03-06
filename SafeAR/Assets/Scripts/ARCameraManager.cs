@@ -41,6 +41,8 @@ public class ARCameraManager : MonoBehaviour
     [Header("Debug Plane Output")]
     private Texture2D outputTexture;
     public GameObject toPlaneImage;
+
+
     private Texture2D currentFrame;
 
     [Header("Screen Renderization")]
@@ -68,6 +70,7 @@ public class ARCameraManager : MonoBehaviour
             arCameraComponent.pixelHeight,
             24
         );
+
         arCameraComponent.targetTexture = renderTexture;
 
         // ------------------------
@@ -126,6 +129,7 @@ public class ARCameraManager : MonoBehaviour
     void Update()
     {
         // currentFrame = CaptureCurrentFrame();
+
         currentFrame = ToTexture2D(renderTexture);
 
         // StartCoroutine(CaptureAndProcessFrame());
@@ -203,14 +207,14 @@ public class ARCameraManager : MonoBehaviour
         }
     }
 
-    void OnRenderImage(RenderTexture source, RenderTexture destination)
-    {
-        // To render the output texture to the screen
-        //-------------------------------------------
-        Debug.Log("OnRenderImage called");
-        TensorFloat outputTensor = TextureConverter.ToTensor(outputTexture);
-        TextureConverter.RenderToScreen(outputTensor);
-    }
+    // void OnRenderImage(RenderTexture source, RenderTexture destination)
+    // {
+    //     // To render the output texture to the screen
+    //     //-------------------------------------------
+    //     Debug.Log("OnRenderImage called");
+    //     TensorFloat outputTensor = TextureConverter.ToTensor(outputTexture);
+    //     TextureConverter.RenderToScreen(outputTensor);
+    // }
 
     // void OnRenderImage(RenderTexture source, RenderTexture destination)
     // {
