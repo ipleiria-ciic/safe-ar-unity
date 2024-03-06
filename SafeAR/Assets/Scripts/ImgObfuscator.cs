@@ -59,7 +59,7 @@ public class ImgObfuscator : MonoBehaviour
         var backendType = WorkerFactory.GetBestTypeForDevice(deviceType);
 
         // Force GPU backend
-        // var backendType = BackendType.GPUCompute;
+        //var backendType = BackendType.CPU;
 
         ops = WorkerFactory.CreateOps(backendType, null);
 

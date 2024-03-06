@@ -10,10 +10,13 @@ supported are blurring, pixelation, and masking.
 </p>
 <p align="center">Overall Schematic of Image Obfuscation System</p>
 
-*(Note: Include Input and output formats, size of Render Texture)*
+**Notes**: 
 
+- Include Input and output formats, size of Render Texture  
+- Files to be included: ImgObfuscator,ImgUtils, ImgAnnot 
 
-ImgObfuscator,ImgUtils, ImgAnnot
+**TO DO: Adapt tensors readability for GPU backend!**
+
 
 ## Image Obfuscator Integration Guide for Unity
 
