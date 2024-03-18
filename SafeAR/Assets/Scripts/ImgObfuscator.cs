@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-// using OpenCvSharp;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -40,7 +39,6 @@ public class ImgObfuscator : MonoBehaviour
     private static readonly int prtMsk = 32;
     private static readonly int ttlDtts = 8400;
     private Dictionary<int, string> labels;
-
 
     // [Header("Debug Text")]
     // public Text debugText;
@@ -502,7 +500,7 @@ public class ImgObfuscator : MonoBehaviour
                 break;
 
             case Obfuscation.Type.Pixelation:
-                ImgUtils.PixelateTexture(outTxtr, boolCrpMsk, 6);
+                ImgUtils.PixelateTexture(outTxtr, boolCrpMsk, 20);
                 break;
 
             case Obfuscation.Type.Blurring:

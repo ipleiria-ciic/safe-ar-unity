@@ -443,7 +443,13 @@ SafeAR/LootAR.nuspec
 SafeAR/.editorconfig
 SafeAR/.vsconfig
 SafeAR/UnityPlayer.so
-
+SafeARUnity/Library/
+SafeARUnity/Temp/
+SafeARUnity/ProjectSettings/
+SafeARUnity/Assets/TextMesh Pro/
+SafeARUnity/UserSettings/
+SafeARUnity/Materials/
+SafeARUnity/Prefabs/
 .consulo/
 *.csproj
 *.unityproj
@@ -452,12 +458,14 @@ SafeAR/UnityPlayer.so
 *.svd
 *.mdb
 
+
 # Builds
 *.apk
 *.aab
 *.unitypackage
 *.app
 *.onnx
+*.log
 
 *.mp4
 
@@ -471,4 +479,5 @@ SafeAR/Assets/OpenCV+Unity
 SafeAR/Assets/MathPlus
 
 
-My_project
+My_project/
+My project/
