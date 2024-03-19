@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Text;
-using Microsoft.Unity.VisualStudio.Editor;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -10,7 +8,7 @@ using UnityEngine;
 using Color = UnityEngine.Color;
 using Debug = UnityEngine.Debug;
 using L = Unity.Sentis.Layers;
-using Stopwatch = System.Diagnostics.Stopwatch;
+//using Stopwatch = System.Diagnostics.Stopwatch;
 
 // TO DO: REVER este repo: https://github.com/needle-mirror/com.unity.sentis/blob/ccf88aa9c5d0ba9fa70efb5d91bc1e6681b0f6a7/Documentation~/manage-memory.md
 
@@ -26,66 +24,58 @@ public class ImgObfuscator : MonoBehaviour
     [SerializeField, Range(0, 1)]
     float scoreThres = 0.35f;
 
-    [SerializeField, Range(0, 1)]
-    float maskThres = 0.5f;
+    [SerializeField, Range(0, 1)] private float maskThres = 0.5f;
 
     [SerializeField]
     int maxOutputBoxes = 64;
     public ModelAsset yoloV8Asset;
-    public IWorker engine;
+    private IWorker m_Engine;
 
-    private Model model;
-    private static readonly int inputSz = 640;
-    private static readonly int prtMskSz = 160;
-    private static readonly int prtMsk = 32;
-    private static readonly int ttlDtts = 8400;
-    private Dictionary<int, string> labels;
+    private Model m_Model;
+    private static readonly int s_InputSz = 640;
+    private static readonly int s_PrtMskSz = 160;
+    private static readonly int s_PrtMsk = 32;
+    private static readonly int s_TtlDtts = 8400;
+    private Dictionary<int, string> m_Labels;
 
     // OPTIMIZATION VARIABLES
-    private int frameCounter = 0; // Initialize a frame counter
-    private Tensor previousTensor; // Store Frame Data
+    private int m_FrameCounter; // Initialize a frame counter
+    private Tensor m_PreviousTensor; // Store Frame Data
     private const int DetectionFrameInterval = 3; // Set the interval for detection frames
-    private Texture2D previousTexture; // Store the previous texture
-    private TensorData previousTensorData = null; // Store the previous tensor data
+    private Texture2D m_PreviousTexture; // Store the previous texture
+    private TensorData m_PreviousTensorData = null; // Store the previous tensor data
+    private TensorData m_CurrentTensorData = null; // Store the current tensor data
 
     // [Header("Debug Text")]
     // public Text debugText;
 
-    Ops ops; // For using the Sentis Ops tensor operations
+    Ops m_Ops; // For using the Sentis Ops tensor operations
 
-    public static Unity.Sentis.DeviceType deviceType;
-    private static BackendType backendType;
-    private bool[,] boolCrpMsk;
-    private List<bool[,]> savedMasks = new List<bool[,]>();
-
-    public struct Scale
+    private static Unity.Sentis.DeviceType _deviceType;
+    private static BackendType _backendType;
+    private bool[,] m_BoolCrpMsk;
+    
+    private List<MaskAndClassID> m_SavedMasksAndClassIDs = new List<MaskAndClassID>();
+    private struct Scale
     {
-        public float X { get; set; }
-        public float Y { get; set; }
-        public float XPrt { get; set; }
-        public float YPrt { get; set; }
+        public float x { get; set; }
+        public float y { get; set; }
+        public float xPrt { get; set; }
+        public float yPrt { get; set; }
     }
 
-    public class SavedMask
+    private class MaskAndClassID
     {
-        public bool[,] Mask { get; set; }
-        public int ClassID { get; set; }
+        public bool[,] mask { get; set; }
+        public int classID { get; set; }
     }
-
-    // public class TensorData
-    // {
-    //     public TensorFloat BoxCoordsAll { get; set; }
-    //     public TensorInt NMS { get; set; }
-    //     public TensorInt ClassIDs { get; set; }
-    //     public TensorFloat Masks { get; set; }
-    // }
-
+    
     public class TensorData
     {
-        public TensorFloat BoxCoordsAll { get; set; }
-        public TensorInt NMS { get; set; }
-        public TensorInt ClassIDs { get; set; }
-        public TensorFloat Masks { get; set; }
+        public TensorFloat boxCoordsAll { get; set; }
+        public TensorInt nms { get; set; }
+        public TensorInt classIDs { get; set; }
+        public TensorFloat masks { get; set; }
 
         // Default constructor
         public TensorData() { }
@@ -93,94 +83,111 @@ public class ImgObfuscator : MonoBehaviour
         // Copy constructor
         public TensorData(TensorData other)
         {
-            if (other.BoxCoordsAll != null)
+            if (other == null)
             {
-                this.BoxCoordsAll = (TensorFloat)other.BoxCoordsAll.DeepCopy();
+                throw new ArgumentNullException(nameof(other));
             }
 
-            if (other.NMS != null)
+            try
             {
-                this.NMS = (TensorInt)other.NMS.DeepCopy();
-            }
+                if (other.boxCoordsAll is { allocator: not null })
+                {
+                    other.boxCoordsAll.MakeReadable();
+                    TensorShape shape = other.boxCoordsAll.shape;
+                    float[] data = other.boxCoordsAll.ToReadOnlyArray();
+                    this.boxCoordsAll = new TensorFloat(shape, data);
+                }
 
-            if (other.ClassIDs != null)
-            {
-                this.ClassIDs = (TensorInt)other.ClassIDs.DeepCopy();
-            }
+                if (other.nms is { allocator: not null })
+                {
+                    other.nms.MakeReadable();
+                    TensorShape shape = other.nms.shape;
+                    int[] data = other.nms.ToReadOnlyArray();
+                    this.nms = new TensorInt(shape, data);
+                }
 
-            if (other.Masks != null)
+                if (other.classIDs is { allocator: not null })
+                {
+                    other.classIDs.MakeReadable();
+                    TensorShape shape = other.classIDs.shape;
+                    int[] data = other.classIDs.ToReadOnlyArray();
+                    this.classIDs = new TensorInt(shape, data);
+                }
+
+                if (other.masks is { allocator: not null })
+                {
+                    other.masks.MakeReadable();
+                    TensorShape shape = other.masks.shape;
+                    float[] data = other.masks.ToReadOnlyArray();
+                    this.masks = new TensorFloat(shape, data);
+                }
+            }
+            catch (InvalidOperationException ex)
             {
-                this.Masks = (TensorFloat)other.Masks.DeepCopy();
+                // Handle the exception as needed, for example, log the error message
+                Debug.LogError($"Error copying TensorData: {ex.Message}");
             }
         }
     }
-
-    ///<summary>
-    /// In the Start method, the device type is determined based on the graphics
-    /// device type. The best backend type for the device is obtained, and the
-    /// YOLO model asset is loaded. Labels are parsed from the YOLO model.
-    ///</summary>
+    
     void Start()
-    {
-        deviceType = GetDeviceType();
-        backendType = WorkerFactory.GetBestTypeForDevice(deviceType);
+        {
+            _deviceType = GetDeviceType();
+            _backendType = WorkerFactory.GetBestTypeForDevice(_deviceType);
 
-        // Force GPU backend
-        //var backendType = BackendType.CPU;
-        //var backendType = BackendType.GPUPixel; // For WebGL
+            // Force GPU backend
+            //var backendType = BackendType.CPU;
+            //var backendType = BackendType.GPUPixel; // For WebGL
 
-        ops = WorkerFactory.CreateOps(backendType, null);
+            m_Ops = WorkerFactory.CreateOps(_backendType, null);
 
-        Debug.Log(
-            " Start() - backendType: " + backendType + "deviceType: " + deviceType + "ops: " + ops
-        );
-        LoadSegmentationModel();
-    }
-
-    /// <summary>
-    /// Loads the YOLOv8 instance segmentation model.
-    /// </summary>
+            Debug.Log(
+                " Start() : backendType: " + _backendType + "deviceType: " + _deviceType + "ops: " + m_Ops
+            );
+            LoadSegmentationModel();
+        }
+    
     void LoadSegmentationModel()
     {
-        model = ModelLoader.Load(yoloV8Asset);
-        engine = WorkerFactory.CreateWorker(WorkerFactory.GetBestTypeForDevice(deviceType), model);
+        m_Model = ModelLoader.Load(yoloV8Asset);
+        m_Engine = WorkerFactory.CreateWorker(WorkerFactory.GetBestTypeForDevice(_deviceType), m_Model);
 
         // Force GPU backend
         // engine = WorkerFactory.CreateWorker(BackendType.GPUCompute, model);
 
-        if (engine == null)
+        if (m_Engine == null)
             Debug.LogError("Worker is null after initialization");
 
-        labels = ParseLabelNames(model);
-        int numClasses = labels.Count;
+        m_Labels = ParseLabelNames(m_Model);
+        int numClasses = m_Labels.Count;
 
         // Set Constants
-        model.AddConstant(new L.Constant("0", new int[] { 0 }));
-        model.AddConstant(new L.Constant("1", new int[] { 1 }));
-        model.AddConstant(new L.Constant("4", new int[] { 4 }));
-        model.AddConstant(new L.Constant("totalBoxes", new int[] { ttlDtts }));
-        model.AddConstant(new L.Constant("masksProtos", new int[] { prtMsk }));
-        model.AddConstant(new L.Constant("maskSz", new int[] { prtMskSz }));
+        m_Model.AddConstant(new L.Constant("0", new int[] { 0 }));
+        m_Model.AddConstant(new L.Constant("1", new int[] { 1 }));
+        m_Model.AddConstant(new L.Constant("4", new int[] { 4 }));
+        m_Model.AddConstant(new L.Constant("totalBoxes", new int[] { s_TtlDtts }));
+        m_Model.AddConstant(new L.Constant("masksProtos", new int[] { s_PrtMsk }));
+        m_Model.AddConstant(new L.Constant("maskSz", new int[] { s_PrtMskSz }));
 
-        model.AddConstant(new L.Constant("cls_box", new int[] { numClasses + 4 }));
-        model.AddConstant(new L.Constant("cls_box_protos", new int[] { numClasses + 4 + prtMsk }));
-        model.AddConstant(new L.Constant("maxOutputBoxes", new int[] { maxOutputBoxes }));
-        model.AddConstant(new L.Constant("iouThreshold", new float[] { iouThres }));
-        model.AddConstant(new L.Constant("scoreThreshold", new float[] { scoreThres }));
-        model.AddConstant(new L.Constant("coefsShape", new int[] { ttlDtts, prtMsk }));
-        model.AddConstant(
-            new L.Constant("masksShape2D", new int[] { prtMsk, prtMskSz * prtMskSz })
+        m_Model.AddConstant(new L.Constant("cls_box", new int[] { numClasses + 4 }));
+        m_Model.AddConstant(new L.Constant("cls_box_protos", new int[] { numClasses + 4 + s_PrtMsk }));
+        m_Model.AddConstant(new L.Constant("maxOutputBoxes", new int[] { maxOutputBoxes }));
+        m_Model.AddConstant(new L.Constant("iouThreshold", new float[] { iouThres }));
+        m_Model.AddConstant(new L.Constant("scoreThreshold", new float[] { scoreThres }));
+        m_Model.AddConstant(new L.Constant("coefsShape", new int[] { s_TtlDtts, s_PrtMsk }));
+        m_Model.AddConstant(
+            new L.Constant("masksShape2D", new int[] { s_PrtMsk, s_PrtMskSz * s_PrtMskSz })
         );
-        model.AddConstant(new L.Constant("masksShape", new int[] { ttlDtts, prtMskSz, prtMskSz }));
+        m_Model.AddConstant(new L.Constant("masksShape", new int[] { s_TtlDtts, s_PrtMskSz, s_PrtMskSz }));
 
         // Add Layers to process the boxes output
-        model.AddLayer(new L.Slice("boxCoords0", "output0", "0", "4", "1"));
-        model.AddLayer(new L.Transpose("boxCoords", "boxCoords0", new int[] { 0, 2, 1 }));
-        model.AddLayer(new L.Slice("scores0", "output0", "4", "cls_box", "1"));
-        model.AddLayer(new L.ReduceMax("scores", new[] { "scores0", "1" }));
-        model.AddLayer(new L.ArgMax("classIDs", "scores0", 1));
+        m_Model.AddLayer(new L.Slice("boxCoords0", "output0", "0", "4", "1"));
+        m_Model.AddLayer(new L.Transpose("boxCoords", "boxCoords0", new int[] { 0, 2, 1 }));
+        m_Model.AddLayer(new L.Slice("scores0", "output0", "4", "cls_box", "1"));
+        m_Model.AddLayer(new L.ReduceMax("scores", new[] { "scores0", "1" }));
+        m_Model.AddLayer(new L.ArgMax("classIDs", "scores0", 1));
 
-        model.AddLayer(
+        m_Model.AddLayer(
             new L.NonMaxSuppression(
                 name: "NMS",
                 boxes: "boxCoords",
@@ -193,7 +200,7 @@ public class ImgObfuscator : MonoBehaviour
         );
 
         // Add layers to process the masks output
-        model.AddLayer(
+        m_Model.AddLayer(
             new L.Slice(
                 name: "masksCoefs",
                 input: "output0",
@@ -208,126 +215,59 @@ public class ImgObfuscator : MonoBehaviour
         // for this, we need to reshape the masksCoefs to (8400, 32) and the masksProtos to (32, 160*160)
 
         // (1, 32, 8400) to (8400, 32) classObfuscationTypes
-        model.AddLayer(new L.Transpose("masksCoefs", "masksCoefs", new int[] { 0, 2, 1 }));
-        model.AddLayer(new L.Reshape("masksCoefsRS", "masksCoefs", "coefsShape")); // (8400, 32)
-        model.AddLayer(new L.Reshape("masksProtosRS", "output1", "masksShape2D")); // (32, 160*160)
-        model.AddLayer(new L.MatMul("masksFlat", "masksCoefsRS", "masksProtosRS")); // (8400, 160*160)
-        model.AddLayer(new L.Reshape("masks", "masksFlat", "masksShape")); // (8400, 160*160) to (8400, 160, 160)
+        m_Model.AddLayer(new L.Transpose("masksCoefs", "masksCoefs", new int[] { 0, 2, 1 }));
+        m_Model.AddLayer(new L.Reshape("masksCoefsRS", "masksCoefs", "coefsShape")); // (8400, 32)
+        m_Model.AddLayer(new L.Reshape("masksProtosRS", "output1", "masksShape2D")); // (32, 160*160)
+        m_Model.AddLayer(new L.MatMul("masksFlat", "masksCoefsRS", "masksProtosRS")); // (8400, 160*160)
+        m_Model.AddLayer(new L.Reshape("masks", "masksFlat", "masksShape")); // (8400, 160*160) to (8400, 160, 160)
 
         // Layer to multiply the masks coefficients by the mask prototypes (8400, 32) * (32, 160*160) = (8400, 25600)
-        model.outputs.Clear();
-        model.AddOutput("boxCoords");
-        model.AddOutput("classIDs");
-        model.AddOutput("NMS");
-        model.AddOutput("masks");
+        m_Model.outputs.Clear();
+        m_Model.AddOutput("boxCoords");
+        m_Model.AddOutput("classIDs");
+        m_Model.AddOutput("NMS");
+        m_Model.AddOutput("masks");
     }
 
     /// <summary>
-    ///
+    /// Runs the model and gets the outputs.
     /// </summary>
-    /// <param name="ipnTxtr"></param>
+    /// <param name="inpTexture"></param>
     /// <param name="classObfuscationTypes"></param>
-    public Texture2D Run(Texture ipnTxtr, Dictionary<int, Obfuscation.Type> classObfuscationTypes)
+    public Texture2D Run(Texture inpTexture, Dictionary<int, Obfuscation.Type> classObfuscationTypes)
     {
         DebugText.Instance.UpdateTxt("@Run");
+
         // Increment the frame counter
-        frameCounter++;
+        m_FrameCounter++;
 
         // Calculate scale factors
-        var scale = CalculateScaleFactors(ipnTxtr);
+        Scale scale = CalculateScaleFactors(inpTexture);
 
         // Convert input texture to tensor and create a copy of the input texture
-        var inputTensor = TextureToTensor(ipnTxtr as Texture);
-        var outTxtr = CopyTexture2D(ipnTxtr);
+        Tensor inputTensor = TextureToTensor(inpTexture);
+        Texture2D outTexture = CopyTexture2D(inpTexture);
         InitClassDict(classObfuscationTypes); // Initialize class dictionary
 
         // Process tensors
-        ProcessTensors(inputTensor, outTxtr, classObfuscationTypes, scale);
+        ProcessTensors(inputTensor, outTexture, classObfuscationTypes, scale);
 
         // Dispose of the input tensor
         inputTensor.Dispose();
 
-        return outTxtr;
+        return outTexture;
     }
 
-    private Scale CalculateScaleFactors(Texture ipnTxtr)
+    private static Scale CalculateScaleFactors(Texture inpTexture)
     {
         return new Scale
         {
-            XPrt = ipnTxtr.width / (float)prtMskSz,
-            YPrt = ipnTxtr.height / (float)prtMskSz,
-            X = ipnTxtr.width / (float)inputSz,
-            Y = ipnTxtr.height / (float)inputSz
+            xPrt = inpTexture.width / (float)s_PrtMskSz,
+            yPrt = inpTexture.height / (float)s_PrtMskSz,
+            x = inpTexture.width / (float)s_InputSz,
+            y = inpTexture.height / (float)s_InputSz
         };
     }
-
-    /// <summary>
-    /// Processes the input tensor and applies obfuscation based on detected classes.
-    /// </summary>
-    /// <param name="inputTensor">The input tensor with image data.</param>
-    /// <param name="outTxtr">The output texture for the obfuscated image.</param>
-    /// <param name="classObfuscationTypes">Maps class IDs to obfuscation types.</param>
-    /// <param name="scale">Scale factors for the input tensor and output texture.</param>
-    /// <remarks>
-    /// Checks if the current frame is a detection frame, runs the model, and gets output tensors.
-    /// If bounding box coordinates of current and previous frames are similar, processes output tensors with skipping.
-    /// Otherwise, processes without skipping and stores current tensor data for the next frame.
-    /// If not a detection frame and there is previous tensor data, processes the output tensors of the previous frame.
-    /// </remarks>
-    // private void ProcessTensors(
-    //     Tensor inputTensor,
-    //     Texture2D outTxtr,
-    //     Dictionary<int, Obfuscation.Type> classObfuscationTypes,
-    //     Scale scale
-    // )
-    // {
-    //     if (IsDetectionFrame()) // Check if it's a detection frame
-    //     {
-    //         if (ModelRunAndGetOutputs(inputTensor, out var tensorData))
-    //         {
-    //             if (
-    //                 previousTensorData != null
-    //                 && IsBoxCoordsSimilar(
-    //                     tensorData,
-    //                     previousTensorData,
-    //                     inputTensor.shape[2],
-    //                     inputTensor.shape[1]
-    //                 )
-    //             )
-    //             {
-    //                 DebugText.Instance.UpdateTxt("@Similar");
-    //                 ProcessOutputTensors(
-    //                     previousTensorData,
-    //                     outTxtr,
-    //                     classObfuscationTypes,
-    //                     scale,
-    //                     true
-    //                 );
-    //             }
-    //             else
-    //             {
-    //                 DebugText.Instance.UpdateTxt("@NotSimilar");
-    //                 ProcessOutputTensors(tensorData, outTxtr, classObfuscationTypes, scale);
-    //                 // previousTensorData = tensorData; // Store the current detection results
-    //                 previousTensorData = new TensorData(tensorData);
-    //             }
-    //         }
-    //     }
-    //     else // If it's skipped frame
-    //     {
-    //         if (previousTensorData != null)
-    //         {
-    //             DebugText.Instance.UpdateTxt("@Stride");
-    //             ProcessOutputTensors(
-    //                 previousTensorData,
-    //                 outTxtr,
-    //                 classObfuscationTypes,
-    //                 scale,
-    //                 true
-    //             );
-    //         }
-    //     }
-    // }
 
     /// <summary>
     /// Processes tensors based on the current frame type and updates the output texture accordingly.
@@ -343,7 +283,7 @@ public class ImgObfuscator : MonoBehaviour
     /// it processes the current tensor data and updates the previous tensor data with a deep copy of the current tensor data.
     /// If the current frame is not a detection frame, it processes the previous tensor data if available.
     /// </remarks>
-    private void ProcessTensors(
+    /*private void ProcessTensors(
         Tensor inputTensor,
         Texture2D outTxtr,
         Dictionary<int, Obfuscation.Type> classObfuscationTypes,
@@ -353,99 +293,192 @@ public class ImgObfuscator : MonoBehaviour
         if (!IsDetectionFrame()) // if it's a skipped frame, use the previous tensor data
         {
             DebugText.Instance.UpdateTxt("@Stride");
-            ProcessPreviousTensorData(outTxtr, classObfuscationTypes, scale);
+            Debug.Log("C_Stride");
+            ProcessPreviousTensorData(m_PreviousTensorData, outTxtr, classObfuscationTypes, scale);
             return;
         }
 
-        if (!ModelRunAndGetOutputs(inputTensor, out var tensorData)) // if no objects are detected
+        if (!ModelRunAndGetOutputs(inputTensor, out var currentData))
         {
-            Debug.Log("No objects detected");
+            Debug.Log("C_No objects detected");
             return;
         }
 
-        if (previousTensorData != null && previousTensorData.ClassIDs != null)
+        if (m_PreviousTensorData != null)
         {
+            // previousTensorData.BoxCoordsAll.PrintDataPart(10, "B_previousTensorData_BoxCoordsAll");
             if (
                 IsBoxCoordsSimilar(
-                    tensorData,
-                    previousTensorData,
+                    currentData,
+                    m_PreviousTensorData,
                     inputTensor.shape[2],
                     inputTensor.shape[1]
+                    
                 )
             ) // if the current and previous frames are similar, use the previous tensor data
             {
                 DebugText.Instance.UpdateTxt("@Similar");
-                ProcessPreviousTensorData(outTxtr, classObfuscationTypes, scale);
+                Debug.Log("C_Similar");
+                ProcessPreviousTensorData(
+                    m_PreviousTensorData,
+                    outTxtr,
+                    classObfuscationTypes,
+                    scale
+                );
             }
+        }else // if the current and previous frames are not similar, process the current tensor data
+        {
+            DebugText.Instance.UpdateTxt("@NotSimilar");
+            Debug.Log("C_Not similar");
+
+            if (currentData.boxCoordsAll == null){
+                Debug.LogError("C_currentTensorData BoxCoordsAll is null");
+                return;
+            }
+            
+            m_PreviousTensorData = new TensorData(currentData); 
+            ProcessOutputTensors(currentData, outTxtr, classObfuscationTypes, scale); //
+            // Debug.Log("P_tensorData_BoxCoordsAll: " + tensorData.BoxCoordsAll)
+            Debug.Log("B_2previousTensorData_BoxCoordsAll: " + m_PreviousTensorData.boxCoordsAll);
+        }
+    }*/
+    private void ProcessTensors(
+    Tensor inputTensor,
+    Texture2D outTxtr,
+    Dictionary<int, Obfuscation.Type> classObfuscationTypes,
+    Scale scale
+)
+{
+    if (!IsDetectionFrame()) // if it's a skipped frame, use the previous tensor data
+    {
+        DebugText.Instance.UpdateTxt("@Stride");
+        Debug.Log("C_Stride");
+        ProcessPreviousTensorData(m_PreviousTensorData, outTxtr, classObfuscationTypes, scale);
+        return;
+    }
+
+    if (!ModelRunAndGetOutputs(inputTensor, out var currentData))
+    {
+        Debug.Log("C_No objects detected");
+        return;
+    }
+
+    if (m_PreviousTensorData != null)
+    {
+        if (
+            IsBoxCoordsSimilar(
+                currentData,
+                m_PreviousTensorData,
+                inputTensor.shape[2],
+                inputTensor.shape[1]
+
+            )
+        ) // if the current and previous frames are similar, use the previous tensor data
+        {
+            DebugText.Instance.UpdateTxt("@Similar");
+            Debug.Log("C_Similar");
+            ProcessPreviousTensorData(
+                m_PreviousTensorData,
+                outTxtr,
+                classObfuscationTypes,
+                scale
+            );
         }
         else // if the current and previous frames are not similar, process the current tensor data
         {
             DebugText.Instance.UpdateTxt("@NotSimilar");
-            ProcessOutputTensors(tensorData, outTxtr, classObfuscationTypes, scale);
-            previousTensorData = new TensorData(tensorData);
+            Debug.Log("C_Not similar");
+
+            if (currentData.boxCoordsAll == null){
+                Debug.LogError("C_currentTensorData BoxCoordsAll is null");
+                return;
+            }
+
+            // Process the current data and then update the previous data
+            ProcessOutputTensors(currentData, outTxtr, classObfuscationTypes, scale);
+            m_PreviousTensorData = new TensorData(currentData);
         }
     }
+    else // if there is no previous data, process the current data and set it as the previous data
+    {
+        DebugText.Instance.UpdateTxt("@NotSimilar");
+        Debug.Log("C_Not similar");
 
-    private void ProcessPreviousTensorData(
-        Texture2D outTxtr,
+        if (currentData.boxCoordsAll == null){
+            Debug.LogError("C_currentTensorData BoxCoordsAll is null");
+            return;
+        }
+
+        // Process the current data and then update the previous data
+        ProcessOutputTensors(currentData, outTxtr, classObfuscationTypes, scale);
+        m_PreviousTensorData = new TensorData(currentData);
+    }
+}
+    
+void ProcessPreviousTensorData(
+        TensorData previousTensorData,
+        Texture2D outTexture,
         Dictionary<int, Obfuscation.Type> classObfuscationTypes,
         Scale scale
     )
     {
         if (previousTensorData == null)
+        {
+            Debug.Log("P_previousTensorData is null");
             return;
-        ProcessOutputTensors(previousTensorData, outTxtr, classObfuscationTypes, scale, true);
+        }
+        ProcessOutputTensors(previousTensorData, outTexture, classObfuscationTypes, scale, true);
     }
 
     private bool IsDetectionFrame()
     {
-        DebugText.Instance.UpdateTxt("@IsDetectionFrame");
-        return frameCounter % DetectionFrameInterval == 0;
+        // DebugText.Instance.UpdateTxt("@IsDetectionFrame");
+        return m_FrameCounter % DetectionFrameInterval == 0;
     }
 
-    private static Texture2D CopyTexture2D(Texture ipnTxtr)
+Texture2D CopyTexture2D(Texture inpTexture)
     {
-        Texture2D outTxtr = new(ipnTxtr.width, ipnTxtr.height, TextureFormat.RGBA32, false);
-        Graphics.CopyTexture(ipnTxtr, outTxtr);
-        return outTxtr;
+        Texture2D outTexture = new(inpTexture.width, inpTexture.height, TextureFormat.RGBA32, false);
+        Graphics.CopyTexture(inpTexture, outTexture);
+        return outTexture;
     }
 
-    private static Tensor TextureToTensor(Texture ipnTxtr)
+Tensor TextureToTensor(Texture inpTexture)
     {
         // Convert the input texture to a Tensor
         Tensor inputTensor = TextureConverter.ToTensor(
-            ipnTxtr,
-            width: inputSz,
-            height: inputSz,
+            inpTexture,
+            width: s_InputSz,
+            height: s_InputSz,
             channels: 3
         );
         inputTensor.MakeReadable();
         return inputTensor;
     }
 
-    private bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
+bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
     {
-        DebugText.Instance.UpdateTxt("@ModelRunAndGetOutputs");
-        engine.Execute(inputTensor);
+        // DebugText.Instance.UpdateTxt("@ModelRunAndGetOutputs");
+        m_Engine.Execute(inputTensor);
 
         tensorData = new TensorData
         {
-            BoxCoordsAll = engine.PeekOutput("boxCoords") as TensorFloat,
-            NMS = engine.PeekOutput("NMS") as TensorInt,
-            ClassIDs = engine.PeekOutput("classIDs") as TensorInt,
-            Masks = engine.PeekOutput("masks") as TensorFloat
+            boxCoordsAll = m_Engine.PeekOutput("boxCoords") as TensorFloat,
+            nms = m_Engine.PeekOutput("NMS") as TensorInt,
+            classIDs = m_Engine.PeekOutput("classIDs") as TensorInt,
+            masks = m_Engine.PeekOutput("masks") as TensorFloat
         };
 
         // print the organized tensor data
-        tensorData.BoxCoordsAll.PrintDataPart(10, "M_BoxCoordsAll");
-        tensorData.NMS.PrintDataPart(10, "M_NMS");
-
-        return tensorData.ClassIDs is not null;
+        tensorData.boxCoordsAll.PrintDataPart(10, "M_BoxCoordsAll");
+        tensorData.nms.PrintDataPart(10, "M_NMS");
+        
+        return tensorData.classIDs is not null;
     }
 
     private void ProcessOutputTensors(
         TensorData tData,
-        Texture2D outTxtr,
+        Texture2D outTexture,
         Dictionary<int, Obfuscation.Type> classObfuscationTypes,
         Scale scale,
         bool skip = false
@@ -453,95 +486,90 @@ public class ImgObfuscator : MonoBehaviour
     {
         DebugText.Instance.UpdateTxt("@ProcessOutputTensors");
 
-        // if (skip)
-        // {
-        //     foreach (var savedMask in savedMasks)
-        //     {
-        //         ApplyObfuscation(classObfuscationTypes[savedMask.ClassID], outTxtr, savedMask.Mask);
-        //     }
-        //     return; // Exit early if skip is true
-        // }
-        using var boxIDs = ops.Slice(
-            tData.NMS,
+        if (skip)
+        {
+                /*
+                 HERE:
+                The Method to use When Skip is True. Sould have ClassId info and Masks
+                private void ApplyObfuscation(
+                    Type obfuscationType, 
+                    Texture2D outTexture, 
+                    bool[,] boolCrpMsk)
+                    
+            */
+                
+            foreach (MaskAndClassID maskAndClassID in m_SavedMasksAndClassIDs)
+            {
+                ApplyObfuscation(classObfuscationTypes[maskAndClassID.classID], outTexture, maskAndClassID.mask);
+            }
+            
+            return; // Exit early if skip is true
+        }
+
+        Debug.Log($"P_tData.NMS shape: {tData.nms.shape}");
+        Tensor boxIDs = m_Ops.Slice(
+            tData.nms,
             new int[] { 2 },
             new int[] { 3 },
             new int[] { 1 },
             new int[] { 1 }
         );
-        using var boxIDsFlat =
+        TensorInt boxIDsFlat =
             boxIDs.ShallowReshape(new TensorShape(boxIDs.shape.length)) as TensorInt;
-        using var boxCoords = ops.Gather(tData.BoxCoordsAll, boxIDsFlat, 1) as TensorFloat;
-        using var labelIDs = ops.Gather(tData.ClassIDs, boxIDsFlat, 2) as TensorInt;
-        using var selectedMasks = ops.Gather(tData.Masks, boxIDsFlat, 0) as TensorFloat;
+        TensorFloat boxCoords = m_Ops.Gather(tData.boxCoordsAll, boxIDsFlat, 1) as TensorFloat;
+        TensorInt labelIDs = m_Ops.Gather(tData.classIDs, boxIDsFlat, 2) as TensorInt;
+        TensorFloat selectedMasks = m_Ops.Gather(tData.masks, boxIDsFlat, 0) as TensorFloat;
 
-        boxIDsFlat.PrintDataPart(10, "boxIDsFlat");
-        boxCoords.PrintDataPart(10, "boxCoords");
-        labelIDs.PrintDataPart(10, "labelIDs");
-        selectedMasks.PrintDataPart(10, "selectedMasks");
-
-        // Get Box IDs from NMS, flatten them, and gather the box coordinates, class IDs
-
-        // TensorInt boxIDsFlat =
-        //     ops.Slice(tensorData.NMS, new[] { 2 }, new[] { 3 }, new[] { 1 }, new[] { 1 })
-        //         .ShallowReshape(tensorData.NMS.shape) as TensorInt;
-
-        // tensorData.NMS.PrintDataPart(10, "NMS");
-
-        // boxIDsFlat.PrintDataPart(10, "boxIDsFlat");
-        // TensorFloat boxCoords = ops.Gather(tensorData.BoxCoordsAll, boxIDsFlat, 1) as TensorFloat;
-        // boxCoords.PrintDataPart(10, "boxCoords");
-        // TensorInt labelIDs = ops.Gather(tensorData.ClassIDs, boxIDsFlat, 2) as TensorInt;
-        // TensorFloat selectedMasks = ops.Gather(tensorData.Masks, boxIDsFlat, 0) as TensorFloat;
-
+        boxIDsFlat.PrintDataPart(10, "O_boxIDsFlat");
+        boxCoords.PrintDataPart(10, "O_boxCoords");
+        labelIDs.PrintDataPart(10, "O_labelIDs");
+        selectedMasks.PrintDataPart(10, "O_selectedMasks");
+        
         // Make labelIDs and boxCoords readable if backendType is GPUCompute
-        if (backendType == BackendType.GPUCompute)
+        if (_backendType == BackendType.GPUCompute)
         {
-            labelIDs.MakeReadable();
-            boxCoords.MakeReadable();
+            labelIDs?.MakeReadable();
+            boxCoords?.MakeReadable();
         }
 
         // Print the labelIDs and boxCoords
         labelIDs.PrintDataPart(10, "labelIDs");
 
         // Dispose of tensors
-        tData.Masks.Dispose();
-        tData.NMS.Dispose();
-        tData.ClassIDs.Dispose();
-        tData.BoxCoordsAll.Dispose();
-        boxIDsFlat.Dispose();
+        tData.masks.Dispose();
+        tData.nms.Dispose();
+        tData.classIDs.Dispose();
+        tData.boxCoordsAll.Dispose();
+        boxIDsFlat?.Dispose();
 
-        Debug.Log("P_boxCoords shape: " + boxCoords.shape[1]);
+        Debug.Log($"P_boxCoords shape: {boxCoords.shape[1]}");
 
         for (int i = 0; i < boxCoords.shape[1]; i++)
         {
             var obfuscationType = classObfuscationTypes[labelIDs[i]];
-            (float x_center, float y_center, float width, float height) = (
+            (float xCenter, float yCenter, float width, float height) = (
                 boxCoords[0, i, 0, 0],
                 boxCoords[0, i, 0, 1],
                 boxCoords[0, i, 0, 2],
                 boxCoords[0, i, 0, 3]
             );
 
-            int[] boxCoordx1y1x2y2 = ImgUtils.CenterToCorner(
-                x: (int)x_center,
-                y: (int)y_center,
+            int[] boxCord1Y1X2Y2 = ImgUtils.CenterToCorner(
+                x: (int)xCenter,
+                y: (int)yCenter,
                 w: (int)width,
                 h: (int)height
             );
 
             Debug.Log(
-                "P_boxCoordx1y1x2y2: "
-                    + boxCoordx1y1x2y2[0]
-                    + " "
-                    + boxCoordx1y1x2y2[1]
-                    + " "
-                    + boxCoordx1y1x2y2[2]
-                    + " "
-                    + boxCoordx1y1x2y2[3]
+                $"P_boxCord1y1x2y2: {boxCord1Y1X2Y2[0]} {boxCord1Y1X2Y2[1]} {boxCord1Y1X2Y2[2]} {boxCord1Y1X2Y2[3]}"
             );
 
+            // Print shape of selectedMasks
+            Debug.Log($"P_selectedMasks: {selectedMasks}");
+
             TensorFloat maskTensor =
-                ops.Slice(
+                m_Ops.Slice(
                     X: selectedMasks,
                     starts: new int[] { i, 0, 0 },
                     ends: new int[] { i + 1, 160, 160 },
@@ -549,43 +577,46 @@ public class ImgObfuscator : MonoBehaviour
                     steps: new int[] { 1, 1, 1 }
                 ) as TensorFloat;
 
-            selectedMasks.Dispose();
+            selectedMasks?.Dispose();
 
-            TensorFloat maskTf = ops.Reshape(maskTensor, new TensorShape(160, 160)) as TensorFloat;
+            TensorFloat maskTf = m_Ops.Reshape(maskTensor, new TensorShape(160, 160)) as TensorFloat;
 
-            Debug.Log("P_maskTf shape: " + maskTf.shape);
+            Debug.Log($"P_maskTf shape: {maskTf.shape}");
 
-            maskTensor.Dispose();
+            maskTensor?.Dispose();
 
             // maskTf.MakeReadable();
 
             TensorFloat maskTfRz = ResizeTF_v3(
                 input: maskTf,
-                scaleX: scale.XPrt,
-                scaleY: scale.YPrt,
+                scaleX: scale.xPrt,
+                scaleY: scale.yPrt,
                 invertY: true
             ); // Shape should be (inpWdth, inpHght)
             // Write every mask to a PNG file with index
 
             maskTf.Dispose();
 
-            boolCrpMsk = CropAndBinarizeMask(
-                maskTensor: maskTfRz,
-                x1y1x2y2: boxCoordx1y1x2y2,
-                scaleX: scale.X,
-                scaleY: scale.Y
-            );
+            bool[,] boolCrpMsk = CropAndBinarizeMask(maskTensor: maskTfRz, x1Y1X2Y2: boxCord1Y1X2Y2, scaleX: scale.x, scaleY: scale.y);
 
-            ImageWriter.WriteBoolMatrixToPNG(boolCrpMsk, "Assets/DebugOutputs/MMMask_" + i + ".png");
+            ImageWriter.WriteBoolMatrixToPNG(
+                boolCrpMsk,
+                $"Assets/DebugOutputs/MMMask_{i}.png"
+            );
 
             maskTfRz.Dispose();
 
-            // save each boolCrpMsk to a list
-            // savedMasks.Add(boolCrpMsk);
+            // HERE:
+            // I must Save The mask and the classId for later use in the ApplyObfuscation method
+            MaskAndClassID maskAndClassID = new MaskAndClassID
+            {
+                mask = boolCrpMsk,
+                classID = labelIDs[i]
+            };
             
-            // savedMasks.Add(new SavedMask { Mask = boolCrpMsk, ClassID = labelIDs[i] });
+            m_SavedMasksAndClassIDs.Add(maskAndClassID);
 
-            ApplyObfuscation(obfuscationType, outTxtr, boolCrpMsk);
+            ApplyObfuscation(obfuscationType, outTexture, boolCrpMsk);
         }
     }
 
@@ -611,7 +642,7 @@ public class ImgObfuscator : MonoBehaviour
     /// with the next set of coordinates. If no set of coordinates has a distance greater than the threshold,
     /// it returns false.
     /// </remarks>
-    public bool IsBoxCoordsSimilar(
+    static bool IsBoxCoordsSimilar(
         TensorData currentData,
         TensorData previousData,
         float imageWidth,
@@ -619,28 +650,34 @@ public class ImgObfuscator : MonoBehaviour
     )
     {
         DebugText.Instance.UpdateTxt("@IsBoxCoordsSimilar");
-        if (
-            currentData.BoxCoordsAll == null
-            || previousData.BoxCoordsAll == null
-            || currentData.BoxCoordsAll.shape != previousData.BoxCoordsAll.shape
-        )
+        Debug.Log("B_previousData.BoxCoordsAll: " + previousData.boxCoordsAll);
+        if (previousData.boxCoordsAll == null)
         {
-            Debug.LogError("B_Invalid data for comparison.");
+            Debug.LogError("B_previousData.BoxCoordsAll is null");
             return false;
         }
 
-        currentData.BoxCoordsAll.MakeReadable();
+        if (currentData.boxCoordsAll == null)
+        {
+            Debug.LogError("B_currentData.BoxCoordsAll is null");
+            return false;
+        }
 
-        float[] currentCoords = currentData.BoxCoordsAll.ToReadOnlyArray();
-        // Make the previous coordinates readable if backendType is GPUCompute,
+        if (currentData.boxCoordsAll.shape != previousData.boxCoordsAll.shape)
+        {
+            // different shapes means different number of boxes
+            return true;
+        }
 
-        // previousData.BoxCoordsAll.MakeReadable();
-        // previousData.BoxCoordsAll.MakeReadable(); // CODIGO FICA PRESO AQUI
-        // previousData.BoxCoordsAll.PrintDataPart(10);
+        currentData.boxCoordsAll.MakeReadable(); // Schedule to make currentData.BoxCoordsAll readable
+        currentData.boxCoordsAll.CompleteAllPendingOperations(); // Wait until the operation is completed
+        float[] currentCoords = currentData.boxCoordsAll.ToReadOnlyArray();
 
-
-        float[] previousCoords = previousData.BoxCoordsAll.ToReadOnlyArray();
-
+        previousData.boxCoordsAll.MakeReadable(); // Schedule to make previousData.BoxCoordsAll readable
+        previousData.boxCoordsAll.CompleteAllPendingOperations(); // Wait until the operation is completed
+        float[] previousCoords = previousData.boxCoordsAll.ToReadOnlyArray();
+    
+    
         for (int i = 0; i < currentCoords.Length; i += 4)
         {
             Vector2 normalizedCurrent = new Vector2(
@@ -672,166 +709,6 @@ public class ImgObfuscator : MonoBehaviour
         return false;
     }
 
-    // public Texture2D Run(
-    //     Texture ipnTxtr,
-    //     Dictionary<int, Obfuscation.Type> classObfuscationTypes,
-    //     bool DrawBBoxes = false
-    // )
-    // {
-    //     using Tensor inputTensor = TextureConverter.ToTensor(
-    //         ipnTxtr,
-    //         width: inputSz,
-    //         height: inputSz,
-    //         channels: 3
-    //     );
-    //     inputTensor.MakeReadable();
-
-    //     InitClassDict(classObfuscationTypes); // Initialize the unspecified classes to None
-
-    //     (int inpWdth, int inpHght) = (ipnTxtr.width, ipnTxtr.height); // Get the input texture dimensions
-
-    //     // Calculate the scale factors for the mask resizing
-    //     (float scaleXPrt, float scaleYPrt) = (inpWdth / (float)prtMskSz, inpHght / (float)prtMskSz);
-    //     (float scaleX, float scaleY) = (inpWdth / (float)inputSz, inpHght / (float)inputSz);
-
-    //     // Create a copy of the input Texture to Texture2D
-    //     Texture2D outTxtr = new(ipnTxtr.width, ipnTxtr.height, TextureFormat.RGBA32, false);
-    //     Graphics.CopyTexture(ipnTxtr, outTxtr);
-
-    //     // Run the model
-    //     engine.Execute(inputTensor);
-
-    //     // Get the output tensors
-    //     TensorFloat boxCoordsAll = engine.PeekOutput("boxCoords") as TensorFloat;
-    //     TensorInt NMS = engine.PeekOutput("NMS") as TensorInt;
-    //     TensorInt classIDs = engine.PeekOutput("classIDs") as TensorInt;
-    //     TensorFloat masks = engine.PeekOutput("masks") as TensorFloat;
-
-    //     if (classIDs == null)
-    //     {
-    //         return outTxtr; // Return the input texture if no objects are detected
-    //     }
-
-    //     // Get Box IDs from NMS
-    //     Tensor boxIDs = ops.Slice(NMS, new[] { 2 }, new[] { 3 }, new[] { 1 }, new[] { 1 });
-
-    //     // Flatten the boxIDs
-    //     TensorShape boxIDsShape = boxIDs.shape;
-    //     TensorInt boxIDsFlat = boxIDs.ShallowReshape(boxIDsShape) as TensorInt;
-
-    //     // Gather the box coordinates, class IDs
-    //     TensorFloat boxCoords = ops.Gather(boxCoordsAll, boxIDsFlat, 1) as TensorFloat;
-    //     TensorInt labelIDs = ops.Gather(classIDs, boxIDsFlat, 2) as TensorInt;
-    //     TensorFloat selectedMasks = ops.Gather(masks, boxIDsFlat, 0) as TensorFloat;
-
-    //     // For GPU backend
-    //     if (backendType == BackendType.GPUCompute)
-    //     {
-    //         labelIDs.MakeReadable();
-    //         boxCoords.MakeReadable();
-    //     }
-
-    //     // --- SIMILARITY SCORE ------------------------------------------------
-
-    //     // float similarityScore = SimilarityScore(
-    //     //     boxCoords: boxCoords,
-    //     //     labelIDs: labelIDs
-    //     // );
-
-    //     // --- SIMILARITY SCORE ------------------------------------------------
-
-    //     // Dispose of the tensors
-    //     masks.Dispose();
-    //     boxIDs.Dispose();
-    //     boxIDsFlat.Dispose();
-    //     boxCoordsAll.Dispose();
-    //     NMS.Dispose();
-    //     classIDs.Dispose();
-
-    //     for (int i = 0; i < boxCoords.shape[1]; i++)
-    //     {
-    //         var obfuscationType = classObfuscationTypes[labelIDs[i]];
-    //         bool[,] boolCrpMsk = new bool[0, 0];
-    //         (float x_center, float y_center, float width, float height) = (
-    //             boxCoords[0, i, 0, 0],
-    //             boxCoords[0, i, 0, 1],
-    //             boxCoords[0, i, 0, 2],
-    //             boxCoords[0, i, 0, 3]
-    //         );
-
-    //         int[] boxCoordx1y1x2y2 = ImgUtils.CenterToCorner(
-    //             x: (int)x_center,
-    //             y: (int)y_center,
-    //             w: (int)width,
-    //             h: (int)height
-    //         );
-
-    //         if (DrawBBoxes == true)
-    //         {
-    //             ImgAnnot.DrawBoundingBox(
-    //                 texture: outTxtr,
-    //                 x1y1x2y2: boxCoordx1y1x2y2,
-    //                 color: Color.red,
-    //                 scaleX: scaleX,
-    //                 scaleY: scaleY
-    //             );
-    //         }
-
-    //         //  ---   Obfuscate the image based on the detected objects   ---
-    //         TensorFloat maskTensor =
-    //             ops.Slice(
-    //                 X: selectedMasks,
-    //                 starts: new int[] { i, 0, 0 },
-    //                 ends: new int[] { i + 1, 160, 160 },
-    //                 axes: new int[] { 0, 1, 2 },
-    //                 steps: new int[] { 1, 1, 1 }
-    //             ) as TensorFloat;
-
-    //         selectedMasks.Dispose();
-
-    //         TensorFloat maskTf = ops.Reshape(maskTensor, new TensorShape(160, 160)) as TensorFloat;
-
-    //         maskTensor.Dispose();
-
-    //         maskTf.MakeReadable();
-
-    //         TensorFloat maskTfRz = ResizeTF_v3(
-    //             input: maskTf,
-    //             scaleX: scaleXPrt,
-    //             scaleY: scaleYPrt,
-    //             invertY: true
-    //         ); // Shape should be (inpWdth, inpHght)
-
-    //         maskTf.Dispose();
-
-    //         boolCrpMsk = CropAndBinarizeMask(
-    //             maskTensor: maskTfRz,
-    //             x1y1x2y2: boxCoordx1y1x2y2,
-    //             scaleX: scaleX,
-    //             scaleY: scaleY
-    //         );
-
-    //         maskTfRz.Dispose();
-
-
-    //         ApplyObfuscation(obfuscationType, outTxtr, boolCrpMsk);
-
-    //         boolCrpMsk = null;
-    //     }
-
-    //     // // Dispose of the tensors
-    //     // boxIDs.Dispose();
-    //     // boxIDsFlat.Dispose();
-    //     // boxCoords.Dispose();
-    //     // labelIDs.Dispose();
-    //     // selectedMasks.Dispose();
-    //     // inputTensor.Dispose();
-
-    //     Texture2D lastOutTxtr = outTxtr;
-
-    //     return outTxtr;
-    // }
-
     /// <summary>
     /// Crops and binarizes a mask tensor based on the given box coordinates and scaling factors.
     /// </summary>
@@ -841,9 +718,9 @@ public class ImgObfuscator : MonoBehaviour
     /// <param name="scaleY">The scaling factor for the y-axis.</param>
     /// <param name="invertY">Flag indicating whether to invert the y-axis.</param>
     /// <returns>A boolean array representing the cropped and binarized mask.</returns>
-    private bool[,] CropAndBinarizeMask(
+    bool[,] CropAndBinarizeMask(
         TensorFloat maskTensor,
-        int[] x1y1x2y2,
+        int[] x1Y1X2Y2,
         float scaleX,
         float scaleY,
         bool invertY = true
@@ -851,24 +728,20 @@ public class ImgObfuscator : MonoBehaviour
     {
         DebugText.Instance.UpdateTxt("@CropAndBinarizeMask");
         // Scale and validate the box coordinates
-        int x1 = Mathf.Max((int)(x1y1x2y2[0] * scaleX), 0);
-        int y1 = Mathf.Max((int)(x1y1x2y2[1] * scaleY), 0);
-        int x2 = Mathf.Min((int)(x1y1x2y2[2] * scaleX), maskTensor.shape[0]);
-        int y2 = Mathf.Min((int)(x1y1x2y2[3] * scaleY), maskTensor.shape[1]);
+        int x1 = Mathf.Max((int)(x1Y1X2Y2[0] * scaleX), 0);
+        int y1 = Mathf.Max((int)(x1Y1X2Y2[1] * scaleY), 0);
+        int x2 = Mathf.Min((int)(x1Y1X2Y2[2] * scaleX), maskTensor.shape[0]);
+        int y2 = Mathf.Min((int)(x1Y1X2Y2[3] * scaleY), maskTensor.shape[1]);
 
         // binarize the mask
-        maskTensor = ops.Sigmoid(maskTensor);
+        maskTensor = m_Ops.Sigmoid(maskTensor);
         TensorShape maskShape = maskTensor.shape;
-        TensorFloat maskConstant = ops.ConstantOfShape(maskShape, maskThres);
-        TensorInt masksBin = ops.GreaterOrEqual(maskTensor, maskConstant);
-
-        // masksBin.MakeReadable();
+        TensorFloat maskConstant = m_Ops.ConstantOfShape(maskShape, maskThres);
+        TensorInt masksBin = m_Ops.GreaterOrEqual(maskTensor, maskConstant);
 
         // For GPU backend
         // masksBin.MakeReadable();
-
-        // maskTensor.PrintDataPart(1000, msg: "maskTensor");
-        // maskConstant.PrintDataPart(1000, msg: "maskConstant");
+        
 
         if (invertY)
         {
@@ -891,12 +764,9 @@ public class ImgObfuscator : MonoBehaviour
         return boolCrpMsk;
     }
 
-    /// <summary>
-    /// Applies the obfuscation to the image based on the detected objects.
-    /// </summary>
-    private static void ApplyObfuscation(
+    void ApplyObfuscation(
         Obfuscation.Type obfuscationType,
-        Texture2D outTxtr,
+        Texture2D outTexture,
         bool[,] boolCrpMsk
     )
     {
@@ -904,15 +774,15 @@ public class ImgObfuscator : MonoBehaviour
         switch (obfuscationType)
         {
             case Obfuscation.Type.Masking:
-                ImgUtils.MaskTexture(outTxtr, boolCrpMsk, Color.red);
+                ImgUtils.MaskTexture(outTexture, boolCrpMsk, Color.red);
                 break;
 
             case Obfuscation.Type.Pixelation:
-                ImgUtils.PixelateTexture(outTxtr, boolCrpMsk, 20);
+                ImgUtils.PixelateTexture(outTexture, boolCrpMsk, 20);
                 break;
 
             case Obfuscation.Type.Blurring:
-                ImgUtils.BlurTexture(ref outTxtr, boolCrpMsk, 7);
+                ImgUtils.BlurTexture(ref outTexture, boolCrpMsk, 7);
                 break;
 
             case Obfuscation.Type.None:
@@ -923,48 +793,9 @@ public class ImgObfuscator : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Resizes the input tensor using the Resize operation using nearest.
-    /// </summary>
-    public static TensorFloat ResizeTF_v2(
-        TensorFloat input,
-        float scaleX,
-        float scaleY,
-        bool invertY = false
-    )
-    {
-        int inputHeight = input.shape[0];
-        int inputWidth = input.shape[1];
-        int outputHeight = (int)(inputHeight * scaleY);
-        int outputWidth = (int)(inputWidth * scaleX);
-
-        // Create a new TensorFloat to store the upsampled result
-        var output = TensorFloat.Zeros(new TensorShape(outputWidth, outputHeight));
-
-        // Iterate over each position in the output TensorFloat
-        for (int y_out = 0; y_out < outputHeight; y_out++)
-        {
-            for (int x_out = 0; x_out < outputWidth; x_out++)
-            {
-                int x_nn = (int)Math.Round(x_out / scaleX);
-                int y_nn = (int)Math.Round(y_out / scaleY);
-
-                x_nn = Math.Min(Math.Max(x_nn, 0), inputWidth - 1);
-                y_nn = Math.Min(Math.Max(y_nn, 0), inputHeight - 1);
-
-                if (invertY)
-                {
-                    y_nn = inputHeight - 1 - y_nn;
-                }
-                output[x_out, y_out] = input[y_nn, x_nn];
-            }
-        }
-
-        return output;
-    }
-
-    [BurstCompile(Debug = true)]
-    public struct ResizeJob : IJobParallelFor
+    
+    [BurstCompile]
+    struct ResizeJob : IJobParallelFor
     {
         [ReadOnly]
         public NativeArray<float> input;
@@ -980,36 +811,29 @@ public class ImgObfuscator : MonoBehaviour
 
         public void Execute(int index)
         {
-            if (input == null || output == null)
-            {
-                Debug.LogError("Input or output array is null.");
-                return;
-            }
+            int yOut = index / outputWidth;
+            int xOut = index % outputWidth;
 
-            int y_out = index / outputWidth;
-            int x_out = index % outputWidth;
-
-            int x_nn = (int)Math.Round(x_out / scaleX);
-            int y_nn = (int)Math.Round(y_out / scaleY);
+            int xNn = (int)Math.Round(xOut / scaleX);
+            int yNn = (int)Math.Round(yOut / scaleY);
 
             if (invertY)
             {
-                y_nn = inputHeight - y_nn;
+                yNn = inputHeight - yNn;
             }
 
-            x_nn = Math.Min(Math.Max(x_nn, 0), inputWidth - 1);
-            y_nn = Math.Min(Math.Max(y_nn, 0), inputHeight - 1);
+            xNn = Math.Min(Math.Max(xNn, 0), inputWidth - 1);
+            yNn = Math.Min(Math.Max(yNn, 0), inputHeight - 1);
 
             // Debug.Log("Execute index: " + index);
-
             // output[index] = input[y_nn * inputWidth + x_nn];
 
-            int outputIndex = y_out * outputWidth + x_out;
-            output[outputIndex] = input[y_nn * inputWidth + x_nn];
+            int outputIndex = yOut * outputWidth + xOut;
+            output[outputIndex] = input[yNn * inputWidth + xNn];
         }
     }
 
-    public static TensorFloat ResizeTF_v3(
+    private static TensorFloat ResizeTF_v3(
         TensorFloat input,
         float scaleX,
         float scaleY,
@@ -1078,80 +902,42 @@ public class ImgObfuscator : MonoBehaviour
     }
 
     /// <summary>
-    /// Resizes the input tensor using the Resize operation. (160x160 to output width x height)
-    /// </summary>
-    public TensorFloat ResizeTF_not_working(TensorFloat input, float scaleX, float scaleY)
-    {
-        // -- ops.Resize: Does not behave as expected ??? --
-
-        float[] scale = new float[] { 2.25f, 5.0f };
-        TensorFloat output = ops.Resize(
-            X: input,
-            scale: scale,
-            interpolationMode: L.InterpolationMode.Nearest,
-            coordTransformMode: L.CoordTransformMode.HalfPixel,
-            nearestMode: L.NearestMode.RoundPreferFloor
-        );
-
-        // -- ops.Resize: Does not behave as expected ??? --
-
-        // Debug.Log("output shape: " + output.shape);
-        return output;
-    }
-
-    /// <summary>
     /// Initializes the unspecified classes to None. TODO: count the number of classes (model) instead of hardcoding it.
     /// </summary>
-    public static void InitClassDict(
+    void InitClassDict(
         Dictionary<int, Obfuscation.Type> classObfuscationTypes,
         int totalClasses = 80
     )
     {
         for (var i = 0; i < totalClasses; i++)
         {
-            if (!classObfuscationTypes.ContainsKey(i))
-            {
-                classObfuscationTypes[i] = Obfuscation.Type.None;
-            }
+            classObfuscationTypes.TryAdd(i, Obfuscation.Type.None);
         }
     }
-
-    /// <summary>
-    /// Parses the names from the model.
-    /// </summary>
-    private static Dictionary<int, string> ParseLabelNames(Model model)
+    
+    Dictionary<int, string> ParseLabelNames(Model model)
     {
         Dictionary<int, string> labels = new();
         // A dictionary with the format "{0: 'person', 1: 'bicycle', 2: 'car', 3: 'motorcycle', .. }"
         char[] removeChars = { '{', '}', ' ' };
         char[] removeCharsValue = { '\'', ' ' };
-        var items = model.Metadata["names"].Trim(removeChars).Split(",");
-        foreach (var item in items)
+        string[] items = model.Metadata["names"].Trim(removeChars).Split(",");
+        foreach (string item in items)
         {
-            var values = item.Split(":");
-            var classId = int.Parse(values[0]);
-            var name = values[1].Trim(removeCharsValue);
-            labels.Add(classId, name);
+            string[] values = item.Split(":");
+            int classId = int.Parse(values[0]);
+            string trim = values[1].Trim(removeCharsValue);
+            labels.Add(classId, trim);
         }
         return labels;
     }
 
-    /// <summary>
-    /// Gets the device type based on the graphics device type.
-    /// </summary>
-    public Unity.Sentis.DeviceType GetDeviceType()
+
+    private Unity.Sentis.DeviceType GetDeviceType()
     {
         var graphicsDeviceType = SystemInfo.graphicsDeviceType;
 
-        if (
-            graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Direct3D11
-            || graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Metal
-            || graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Vulkan
-        )
-        {
-            return Unity.Sentis.DeviceType.GPU;
-        }
-        return Unity.Sentis.DeviceType.CPU;
+        return graphicsDeviceType is UnityEngine.Rendering.GraphicsDeviceType.Direct3D11 or UnityEngine.Rendering.GraphicsDeviceType.Metal or UnityEngine.Rendering.GraphicsDeviceType.Vulkan ? Unity.Sentis.DeviceType.GPU : Unity.Sentis.DeviceType.CPU;
     }
 
     /// <summary>
@@ -1160,8 +946,43 @@ public class ImgObfuscator : MonoBehaviour
     void OnDestroy()
     {
         DebugText.Instance.UpdateTxt("@OnDestroy");
-        engine?.Dispose();
-        ops?.Dispose();
+        m_Engine?.Dispose();
+        m_Ops?.Dispose();
+    }
+    TensorFloat ResizeTF_v2(
+        TensorFloat input,
+        float scaleX,
+        float scaleY,
+        bool invertY = false
+    )
+    {
+        int inputHeight = input.shape[0];
+        int inputWidth = input.shape[1];
+        int outputHeight = (int)(inputHeight * scaleY);
+        int outputWidth = (int)(inputWidth * scaleX);
+
+        // Create a new TensorFloat to store the upsampled result
+        var output = TensorFloat.Zeros(new TensorShape(outputWidth, outputHeight));
+
+        // Iterate over each position in the output TensorFloat
+        for (int y_out = 0; y_out < outputHeight; y_out++)
+        {
+            for (int x_out = 0; x_out < outputWidth; x_out++)
+            {
+                int x_nn = (int)Math.Round(x_out / scaleX);
+                int y_nn = (int)Math.Round(y_out / scaleY);
+
+                x_nn = Math.Min(Math.Max(x_nn, 0), inputWidth - 1);
+                y_nn = Math.Min(Math.Max(y_nn, 0), inputHeight - 1);
+
+                if (invertY)
+                {
+                    y_nn = inputHeight - 1 - y_nn;
+                }
+                output[x_out, y_out] = input[y_nn, x_nn];
+            }
+        }
+        return output;
     }
 }
 

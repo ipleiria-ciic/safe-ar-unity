@@ -29,12 +29,30 @@ public class CamaraManager : MonoBehaviour
 
     void Update()
     {
+
         // Check if the camera is playing
         if (webCamTexture.isPlaying && webCamTexture.didUpdateThisFrame)
         {
             var stopwatch1 = new Stopwatch();
             stopwatch1.Start();
 
+            if (webCamTexture == null)
+            {
+                Debug.LogError("WebCamTexture is null");
+            }
+            else
+            {
+                Debug.Log("WebCamTexture is not null");
+            }
+
+            if (obfuscationTypes == null)
+            {
+                Debug.LogError("obfuscationTypes is null");
+            }
+            else
+            {
+                Debug.Log("obfuscationTypes is not null");
+            }
 
             obfuscatedTexture = imgObfuscator.Run(webCamTexture, obfuscationTypes);
 
