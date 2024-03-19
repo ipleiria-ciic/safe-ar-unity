@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using JetBrains.Annotations;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -41,21 +42,21 @@ public class ImgObfuscator : MonoBehaviour
     // OPTIMIZATION VARIABLES
     private int m_FrameCounter; // Initialize a frame counter
     private Tensor m_PreviousTensor; // Store Frame Data
-    private const int DetectionFrameInterval = 3; // Set the interval for detection frames
+    private const int DetectionFrameInterval = 4; // Set the interval for detection frames
     private Texture2D m_PreviousTexture; // Store the previous texture
     private TensorData m_PreviousTensorData = null; // Store the previous tensor data
-    private TensorData m_CurrentTensorData = null; // Store the current tensor data
+    //private TensorData m_CurrentTensorData = null; // Store the current tensor data
 
     // [Header("Debug Text")]
     // public Text debugText;
 
-    Ops m_Ops; // For using the Sentis Ops tensor operations
+    private Ops m_Ops; // For using the Sentis Ops tensor operations
 
     private static Unity.Sentis.DeviceType _deviceType;
     private static BackendType _backendType;
     private bool[,] m_BoolCrpMsk;
     
-    private List<MaskAndClassID> m_SavedMasksAndClassIDs = new List<MaskAndClassID>();
+    private readonly List<MaskAndClassID> m_SavedMasksAndClassIDs = new List<MaskAndClassID>();
     private struct Scale
     {
         public float x { get; set; }
@@ -236,7 +237,7 @@ public class ImgObfuscator : MonoBehaviour
     /// <param name="classObfuscationTypes"></param>
     public Texture2D Run(Texture inpTexture, Dictionary<int, Obfuscation.Type> classObfuscationTypes)
     {
-        DebugText.Instance.UpdateTxt("@Run");
+        // DebugText.Instance.UpdateTxt("@Run");
 
         // Increment the frame counter
         m_FrameCounter++;
@@ -273,7 +274,7 @@ public class ImgObfuscator : MonoBehaviour
     /// Processes tensors based on the current frame type and updates the output texture accordingly.
     /// </summary>
     /// <param name="inputTensor">The input tensor to be processed.</param>
-    /// <param name="outTxtr">The output texture to be updated.</param>
+    /// <param name="outTexture">The output texture to be updated.</param>
     /// <param name="classObfuscationTypes">A dictionary mapping class IDs to obfuscation types.</param>
     /// <param name="scale">The scale at which to process the tensors.</param>
     /// <remarks>
@@ -283,139 +284,53 @@ public class ImgObfuscator : MonoBehaviour
     /// it processes the current tensor data and updates the previous tensor data with a deep copy of the current tensor data.
     /// If the current frame is not a detection frame, it processes the previous tensor data if available.
     /// </remarks>
-    /*private void ProcessTensors(
+    private void ProcessTensors(
         Tensor inputTensor,
-        Texture2D outTxtr,
+        Texture2D outTexture,
         Dictionary<int, Obfuscation.Type> classObfuscationTypes,
         Scale scale
-    )
-    {
-        if (!IsDetectionFrame()) // if it's a skipped frame, use the previous tensor data
+        )
         {
-            DebugText.Instance.UpdateTxt("@Stride");
-            Debug.Log("C_Stride");
-            ProcessPreviousTensorData(m_PreviousTensorData, outTxtr, classObfuscationTypes, scale);
-            return;
-        }
+            if (!IsDetectionFrame()) // if it's a skipped frame, use the previous tensor data
+            {
+                //DebugText.Instance.UpdateTxt("@Stride");
+                //Debug.Log("C_Stride");
+                ProcessPreviousTensorData(m_PreviousTensorData, outTexture, classObfuscationTypes, scale);
+                return;
+            }
 
-        if (!ModelRunAndGetOutputs(inputTensor, out var currentData))
-        {
-            Debug.Log("C_No objects detected");
-            return;
-        }
+            if (!ModelRunAndGetOutputs(inputTensor, out var currentData))
+            {
+                //Debug.Log("C_No objects detected");
+                m_PreviousTensorData = null;
+                return;
+            }
 
-        if (m_PreviousTensorData != null)
-        {
-            // previousTensorData.BoxCoordsAll.PrintDataPart(10, "B_previousTensorData_BoxCoordsAll");
-            if (
-                IsBoxCoordsSimilar(
+            if (IsBoxCoordsSimilar(
                     currentData,
                     m_PreviousTensorData,
                     inputTensor.shape[2],
                     inputTensor.shape[1]
-                    
                 )
             ) // if the current and previous frames are similar, use the previous tensor data
+            { 
+                ProcessPreviousTensorData(m_PreviousTensorData, outTexture, classObfuscationTypes, scale);
+            }
+            else // if the current and previous frames are not similar, process the current tensor data
             {
-                DebugText.Instance.UpdateTxt("@Similar");
-                Debug.Log("C_Similar");
-                ProcessPreviousTensorData(
-                    m_PreviousTensorData,
-                    outTxtr,
-                    classObfuscationTypes,
-                    scale
-                );
+                if (currentData.boxCoordsAll == null){
+                    m_PreviousTensorData = null;
+                    Debug.LogError("C_currentTensorData BoxCoordsAll is null");
+                    return;
+                }
+
+                // Process the current data and then update the previous data
+                ProcessOutputTensors(currentData, outTexture, classObfuscationTypes, scale);
+                m_PreviousTensorData = new TensorData(currentData);
             }
-        }else // if the current and previous frames are not similar, process the current tensor data
-        {
-            DebugText.Instance.UpdateTxt("@NotSimilar");
-            Debug.Log("C_Not similar");
-
-            if (currentData.boxCoordsAll == null){
-                Debug.LogError("C_currentTensorData BoxCoordsAll is null");
-                return;
-            }
-            
-            m_PreviousTensorData = new TensorData(currentData); 
-            ProcessOutputTensors(currentData, outTxtr, classObfuscationTypes, scale); //
-            // Debug.Log("P_tensorData_BoxCoordsAll: " + tensorData.BoxCoordsAll)
-            Debug.Log("B_2previousTensorData_BoxCoordsAll: " + m_PreviousTensorData.boxCoordsAll);
-        }
-    }*/
-    private void ProcessTensors(
-    Tensor inputTensor,
-    Texture2D outTxtr,
-    Dictionary<int, Obfuscation.Type> classObfuscationTypes,
-    Scale scale
-)
-{
-    if (!IsDetectionFrame()) // if it's a skipped frame, use the previous tensor data
-    {
-        DebugText.Instance.UpdateTxt("@Stride");
-        Debug.Log("C_Stride");
-        ProcessPreviousTensorData(m_PreviousTensorData, outTxtr, classObfuscationTypes, scale);
-        return;
-    }
-
-    if (!ModelRunAndGetOutputs(inputTensor, out var currentData))
-    {
-        Debug.Log("C_No objects detected");
-        return;
-    }
-
-    if (m_PreviousTensorData != null)
-    {
-        if (
-            IsBoxCoordsSimilar(
-                currentData,
-                m_PreviousTensorData,
-                inputTensor.shape[2],
-                inputTensor.shape[1]
-
-            )
-        ) // if the current and previous frames are similar, use the previous tensor data
-        {
-            DebugText.Instance.UpdateTxt("@Similar");
-            Debug.Log("C_Similar");
-            ProcessPreviousTensorData(
-                m_PreviousTensorData,
-                outTxtr,
-                classObfuscationTypes,
-                scale
-            );
-        }
-        else // if the current and previous frames are not similar, process the current tensor data
-        {
-            DebugText.Instance.UpdateTxt("@NotSimilar");
-            Debug.Log("C_Not similar");
-
-            if (currentData.boxCoordsAll == null){
-                Debug.LogError("C_currentTensorData BoxCoordsAll is null");
-                return;
-            }
-
-            // Process the current data and then update the previous data
-            ProcessOutputTensors(currentData, outTxtr, classObfuscationTypes, scale);
-            m_PreviousTensorData = new TensorData(currentData);
-        }
-    }
-    else // if there is no previous data, process the current data and set it as the previous data
-    {
-        DebugText.Instance.UpdateTxt("@NotSimilar");
-        Debug.Log("C_Not similar");
-
-        if (currentData.boxCoordsAll == null){
-            Debug.LogError("C_currentTensorData BoxCoordsAll is null");
-            return;
         }
 
-        // Process the current data and then update the previous data
-        ProcessOutputTensors(currentData, outTxtr, classObfuscationTypes, scale);
-        m_PreviousTensorData = new TensorData(currentData);
-    }
-}
-    
-void ProcessPreviousTensorData(
+    private void ProcessPreviousTensorData(
         TensorData previousTensorData,
         Texture2D outTexture,
         Dictionary<int, Obfuscation.Type> classObfuscationTypes,
@@ -436,14 +351,14 @@ void ProcessPreviousTensorData(
         return m_FrameCounter % DetectionFrameInterval == 0;
     }
 
-Texture2D CopyTexture2D(Texture inpTexture)
+    private static Texture2D CopyTexture2D(Texture inpTexture)
     {
         Texture2D outTexture = new(inpTexture.width, inpTexture.height, TextureFormat.RGBA32, false);
         Graphics.CopyTexture(inpTexture, outTexture);
         return outTexture;
     }
 
-Tensor TextureToTensor(Texture inpTexture)
+    private static Tensor TextureToTensor(Texture inpTexture)
     {
         // Convert the input texture to a Tensor
         Tensor inputTensor = TextureConverter.ToTensor(
@@ -456,7 +371,7 @@ Tensor TextureToTensor(Texture inpTexture)
         return inputTensor;
     }
 
-bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
+    private bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
     {
         // DebugText.Instance.UpdateTxt("@ModelRunAndGetOutputs");
         m_Engine.Execute(inputTensor);
@@ -470,8 +385,8 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
         };
 
         // print the organized tensor data
-        tensorData.boxCoordsAll.PrintDataPart(10, "M_BoxCoordsAll");
-        tensorData.nms.PrintDataPart(10, "M_NMS");
+        //tensorData.boxCoordsAll.PrintDataPart(10, "M_BoxCoordsAll");
+        //tensorData.nms.PrintDataPart(10, "M_NMS");
         
         return tensorData.classIDs is not null;
     }
@@ -484,29 +399,18 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
         bool skip = false
     )
     {
-        DebugText.Instance.UpdateTxt("@ProcessOutputTensors");
+        // DebugText.Instance.UpdateTxt("@ProcessOutputTensors");
 
         if (skip)
         {
-                /*
-                 HERE:
-                The Method to use When Skip is True. Sould have ClassId info and Masks
-                private void ApplyObfuscation(
-                    Type obfuscationType, 
-                    Texture2D outTexture, 
-                    bool[,] boolCrpMsk)
-                    
-            */
-                
             foreach (MaskAndClassID maskAndClassID in m_SavedMasksAndClassIDs)
             {
                 ApplyObfuscation(classObfuscationTypes[maskAndClassID.classID], outTexture, maskAndClassID.mask);
             }
-            
-            return; // Exit early if skip is true
+            return;
         }
 
-        Debug.Log($"P_tData.NMS shape: {tData.nms.shape}");
+        //Debug.Log($"P_tData.NMS shape: {tData.nms.shape}");
         Tensor boxIDs = m_Ops.Slice(
             tData.nms,
             new int[] { 2 },
@@ -520,10 +424,12 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
         TensorInt labelIDs = m_Ops.Gather(tData.classIDs, boxIDsFlat, 2) as TensorInt;
         TensorFloat selectedMasks = m_Ops.Gather(tData.masks, boxIDsFlat, 0) as TensorFloat;
 
-        boxIDsFlat.PrintDataPart(10, "O_boxIDsFlat");
-        boxCoords.PrintDataPart(10, "O_boxCoords");
-        labelIDs.PrintDataPart(10, "O_labelIDs");
-        selectedMasks.PrintDataPart(10, "O_selectedMasks");
+        //boxIDsFlat.PrintDataPart(10, "O_boxIDsFlat");
+        //boxCoords.PrintDataPart(10, "O_boxCoords");
+        //labelIDs.PrintDataPart(10, "O_labelIDs");
+        //selectedMasks.PrintDataPart(10, "O_selectedMasks");
+        
+        //Debug.Log("boxIDsFlat shape: " + boxIDsFlat.shape);
         
         // Make labelIDs and boxCoords readable if backendType is GPUCompute
         if (_backendType == BackendType.GPUCompute)
@@ -533,7 +439,7 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
         }
 
         // Print the labelIDs and boxCoords
-        labelIDs.PrintDataPart(10, "labelIDs");
+        //labelIDs.PrintDataPart(10, "labelIDs");
 
         // Dispose of tensors
         tData.masks.Dispose();
@@ -542,7 +448,7 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
         tData.boxCoordsAll.Dispose();
         boxIDsFlat?.Dispose();
 
-        Debug.Log($"P_boxCoords shape: {boxCoords.shape[1]}");
+        //Debug.Log($"P_boxCoords shape: {boxCoords.shape[1]}");
 
         for (int i = 0; i < boxCoords.shape[1]; i++)
         {
@@ -561,14 +467,14 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
                 h: (int)height
             );
 
-            Debug.Log(
+            /*Debug.Log(
                 $"P_boxCord1y1x2y2: {boxCord1Y1X2Y2[0]} {boxCord1Y1X2Y2[1]} {boxCord1Y1X2Y2[2]} {boxCord1Y1X2Y2[3]}"
-            );
+            );*/
 
             // Print shape of selectedMasks
-            Debug.Log($"P_selectedMasks: {selectedMasks}");
+            //Debug.Log($"P_selectedMasks: {selectedMasks}");
 
-            TensorFloat maskTensor =
+            TensorFloat masksTensor =
                 m_Ops.Slice(
                     X: selectedMasks,
                     starts: new int[] { i, 0, 0 },
@@ -579,11 +485,11 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
 
             selectedMasks?.Dispose();
 
-            TensorFloat maskTf = m_Ops.Reshape(maskTensor, new TensorShape(160, 160)) as TensorFloat;
+            TensorFloat maskTf = m_Ops.Reshape(masksTensor, new TensorShape(160, 160)) as TensorFloat;
 
-            Debug.Log($"P_maskTf shape: {maskTf.shape}");
+            //Debug.Log($"P_maskTf shape: {maskTf.shape}");
 
-            maskTensor?.Dispose();
+            masksTensor?.Dispose();
 
             // maskTf.MakeReadable();
 
@@ -595,25 +501,24 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
             ); // Shape should be (inpWdth, inpHght)
             // Write every mask to a PNG file with index
 
-            maskTf.Dispose();
+            maskTf?.Dispose();
 
             bool[,] boolCrpMsk = CropAndBinarizeMask(maskTensor: maskTfRz, x1Y1X2Y2: boxCord1Y1X2Y2, scaleX: scale.x, scaleY: scale.y);
 
-            ImageWriter.WriteBoolMatrixToPNG(
+            /*ImageWriter.WriteBoolMatrixToPNG(
                 boolCrpMsk,
                 $"Assets/DebugOutputs/MMMask_{i}.png"
-            );
+            );*/
 
             maskTfRz.Dispose();
 
-            // HERE:
-            // I must Save The mask and the classId for later use in the ApplyObfuscation method
-            MaskAndClassID maskAndClassID = new MaskAndClassID
+            // Save the mask and class ID
+            m_SavedMasksAndClassIDs.Clear();
+            var maskAndClassID = new MaskAndClassID
             {
                 mask = boolCrpMsk,
                 classID = labelIDs[i]
             };
-            
             m_SavedMasksAndClassIDs.Add(maskAndClassID);
 
             ApplyObfuscation(obfuscationType, outTexture, boolCrpMsk);
@@ -631,52 +536,44 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
     /// Returns true if the distance between the normalized current and previous coordinates,
     /// as well as their sizes, is greater than a certain threshold (0.01). Otherwise, returns false.
     /// </returns>
-    /// <remarks>
-    /// The method first checks if the BoxCoordsAll property of both TensorData objects is not null and
-    /// if their shapes are equal. If not, it logs an error and returns false.
-    /// Then, it makes the BoxCoordsAll of the previous TensorData readable and converts the BoxCoordsAll
-    /// of both TensorData objects to arrays.
-    /// It then iterates over the coordinates, normalizes them and their sizes, and calculates the distance
-    /// between the current and previous normalized coordinates and sizes.
-    /// If the distance is greater than the square of the threshold (0.01), it returns true. If not, it continues
-    /// with the next set of coordinates. If no set of coordinates has a distance greater than the threshold,
-    /// it returns false.
-    /// </remarks>
     static bool IsBoxCoordsSimilar(
         TensorData currentData,
-        TensorData previousData,
+        [CanBeNull] TensorData previousData,
         float imageWidth,
         float imageHeight
     )
     {
-        DebugText.Instance.UpdateTxt("@IsBoxCoordsSimilar");
-        Debug.Log("B_previousData.BoxCoordsAll: " + previousData.boxCoordsAll);
-        if (previousData.boxCoordsAll == null)
+        // Check if both currentData and previousData are null
+        if (currentData == null && previousData == null)
         {
-            Debug.LogError("B_previousData.BoxCoordsAll is null");
+            return true; // both are null, so similar
+        }
+
+        // Check if either currentData or previousData is null
+        if (currentData == null || previousData == null)
+        {
+            return false; // one of them is null, so not similar
+        }
+
+        // Check if the shapes of boxCoordsAll are different
+        if (currentData.boxCoordsAll != null && previousData.boxCoordsAll != null && currentData.boxCoordsAll.shape != previousData.boxCoordsAll.shape)
+        {
+            return false; // different shapes means different number of boxes, so not similar
+        }
+
+        // Ensure currentData.boxCoordsAll is readable
+        currentData.boxCoordsAll?.MakeReadable();
+        currentData.boxCoordsAll?.CompleteAllPendingOperations();
+        float[] currentCoords = currentData.boxCoordsAll?.ToReadOnlyArray();
+
+        // Ensure previousData.boxCoordsAll is readable
+        previousData.boxCoordsAll?.MakeReadable();
+        previousData.boxCoordsAll?.CompleteAllPendingOperations();
+        float[] previousCoords = previousData.boxCoordsAll?.ToReadOnlyArray();
+        if (currentCoords == null || previousCoords == null)
+        {
             return false;
         }
-
-        if (currentData.boxCoordsAll == null)
-        {
-            Debug.LogError("B_currentData.BoxCoordsAll is null");
-            return false;
-        }
-
-        if (currentData.boxCoordsAll.shape != previousData.boxCoordsAll.shape)
-        {
-            // different shapes means different number of boxes
-            return true;
-        }
-
-        currentData.boxCoordsAll.MakeReadable(); // Schedule to make currentData.BoxCoordsAll readable
-        currentData.boxCoordsAll.CompleteAllPendingOperations(); // Wait until the operation is completed
-        float[] currentCoords = currentData.boxCoordsAll.ToReadOnlyArray();
-
-        previousData.boxCoordsAll.MakeReadable(); // Schedule to make previousData.BoxCoordsAll readable
-        previousData.boxCoordsAll.CompleteAllPendingOperations(); // Wait until the operation is completed
-        float[] previousCoords = previousData.boxCoordsAll.ToReadOnlyArray();
-    
     
         for (int i = 0; i < currentCoords.Length; i += 4)
         {
@@ -701,6 +598,8 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
             float distance =
                 (normalizedCurrent - normalizedPrevious).sqrMagnitude
                 + (normalizedCurrentSize - normalizedPreviousSize).sqrMagnitude;
+            
+            Debug.Log("IsBoxCoordsSimilar, Distance: " + distance);
 
             if (distance > 0.01f) // square of the threshold
                 return true;
@@ -726,7 +625,7 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
         bool invertY = true
     )
     {
-        DebugText.Instance.UpdateTxt("@CropAndBinarizeMask");
+        // DebugText.Instance.UpdateTxt("@CropAndBinarizeMask");
         // Scale and validate the box coordinates
         int x1 = Mathf.Max((int)(x1Y1X2Y2[0] * scaleX), 0);
         int y1 = Mathf.Max((int)(x1Y1X2Y2[1] * scaleY), 0);
@@ -742,7 +641,6 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
         // For GPU backend
         // masksBin.MakeReadable();
         
-
         if (invertY)
         {
             y1 = maskTensor.shape[1] - y1;
@@ -764,13 +662,13 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
         return boolCrpMsk;
     }
 
-    void ApplyObfuscation(
+    static void ApplyObfuscation(
         Obfuscation.Type obfuscationType,
         Texture2D outTexture,
         bool[,] boolCrpMsk
     )
     {
-        DebugText.Instance.UpdateTxt("@ApplyObfuscation");
+        // DebugText.Instance.UpdateTxt("@ApplyObfuscation");
         switch (obfuscationType)
         {
             case Obfuscation.Type.Masking:
@@ -792,7 +690,6 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
                 throw new ArgumentException("Invalid obfuscation type");
         }
     }
-
     
     [BurstCompile]
     struct ResizeJob : IJobParallelFor
@@ -824,10 +721,7 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
 
             xNn = Math.Min(Math.Max(xNn, 0), inputWidth - 1);
             yNn = Math.Min(Math.Max(yNn, 0), inputHeight - 1);
-
-            // Debug.Log("Execute index: " + index);
-            // output[index] = input[y_nn * inputWidth + x_nn];
-
+            
             int outputIndex = yOut * outputWidth + xOut;
             output[outputIndex] = input[yNn * inputWidth + xNn];
         }
@@ -840,7 +734,7 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
         bool invertY = false
     )
     {
-        DebugText.Instance.UpdateTxt("@ResizeTF_v3");
+        // DebugText.Instance.UpdateTxt("@ResizeTF_v3");
         int inputHeight = input.shape[0];
         int inputWidth = input.shape[1];
         int outputHeight = (int)(inputHeight * scaleY);
@@ -914,8 +808,8 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
             classObfuscationTypes.TryAdd(i, Obfuscation.Type.None);
         }
     }
-    
-    Dictionary<int, string> ParseLabelNames(Model model)
+
+    static Dictionary<int, string> ParseLabelNames(Model model)
     {
         Dictionary<int, string> labels = new();
         // A dictionary with the format "{0: 'person', 1: 'bicycle', 2: 'car', 3: 'motorcycle', .. }"
@@ -933,7 +827,7 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
     }
 
 
-    private Unity.Sentis.DeviceType GetDeviceType()
+    private static Unity.Sentis.DeviceType GetDeviceType()
     {
         var graphicsDeviceType = SystemInfo.graphicsDeviceType;
 
@@ -945,44 +839,9 @@ bool ModelRunAndGetOutputs(Tensor inputTensor, out TensorData tensorData)
     /// </summary>
     void OnDestroy()
     {
-        DebugText.Instance.UpdateTxt("@OnDestroy");
+        // DebugText.Instance.UpdateTxt("@OnDestroy");
         m_Engine?.Dispose();
         m_Ops?.Dispose();
-    }
-    TensorFloat ResizeTF_v2(
-        TensorFloat input,
-        float scaleX,
-        float scaleY,
-        bool invertY = false
-    )
-    {
-        int inputHeight = input.shape[0];
-        int inputWidth = input.shape[1];
-        int outputHeight = (int)(inputHeight * scaleY);
-        int outputWidth = (int)(inputWidth * scaleX);
-
-        // Create a new TensorFloat to store the upsampled result
-        var output = TensorFloat.Zeros(new TensorShape(outputWidth, outputHeight));
-
-        // Iterate over each position in the output TensorFloat
-        for (int y_out = 0; y_out < outputHeight; y_out++)
-        {
-            for (int x_out = 0; x_out < outputWidth; x_out++)
-            {
-                int x_nn = (int)Math.Round(x_out / scaleX);
-                int y_nn = (int)Math.Round(y_out / scaleY);
-
-                x_nn = Math.Min(Math.Max(x_nn, 0), inputWidth - 1);
-                y_nn = Math.Min(Math.Max(y_nn, 0), inputHeight - 1);
-
-                if (invertY)
-                {
-                    y_nn = inputHeight - 1 - y_nn;
-                }
-                output[x_out, y_out] = input[y_nn, x_nn];
-            }
-        }
-        return output;
     }
 }
 

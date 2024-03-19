@@ -567,27 +567,25 @@ public static class ImgUtils
         return new Color(totalR / totalPixels, totalG / totalPixels, totalB / totalPixels);
     }
 
-    // method to convert center coordinates to corner coordinates
-
+    
+    /// method to convert center coordinates to corner coordinates
     public static int[] CenterToCorner(float x, float y, float w, float h)
     {
-        if (x < 0 || y < 0 || w < 0 || h < 0)
-        {
-            throw new ArgumentException("Coordinates and dimensions must be non-negative");
-        }
+        // Convert any negative value to 0 using Math.Max
+        x = Math.Max(0, x);
+        y = Math.Max(0, y);
+        w = Math.Max(0, w);
+        h = Math.Max(0, h);
 
-        int x1 = (int)(x - w / 2);
-        int y1 = (int)(y - h / 2);
-        int x2 = (int)(x + w / 2);
-        int y2 = (int)(y + h / 2);
-
-        if (x1 < 0 || y1 < 0 || x2 < 0 || y2 < 0)
-        {
-            throw new ArgumentException("Calculated coordinates must be non-negative");
-        }
+        // Calculate corner coordinates and ensure they are non-negative
+        int x1 = Math.Max(0, (int)(x - w / 2));
+        int y1 = Math.Max(0, (int)(y - h / 2));
+        int x2 = Math.Max(0, (int)(x + w / 2));
+        int y2 = Math.Max(0, (int)(y + h / 2));
 
         return new int[] { x1, y1, x2, y2 };
     }
+
 
     public static int[] CornerToCenter(float x1, float y1, float x2, float y2)
     {

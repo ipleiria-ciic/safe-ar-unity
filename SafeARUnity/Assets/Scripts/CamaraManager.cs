@@ -33,30 +33,15 @@ public class CamaraManager : MonoBehaviour
         // Check if the camera is playing
         if (webCamTexture.isPlaying && webCamTexture.didUpdateThisFrame)
         {
+            
+            // Debug.Log(webCamTexture == null ? "WebCamTexture is null" : "WebCamTexture is not null");
+            // Debug.Log(obfuscationTypes == null ? "obfuscationTypes is null" : "obfuscationTypes is not null");
             var stopwatch1 = new Stopwatch();
             stopwatch1.Start();
-
-            if (webCamTexture == null)
-            {
-                Debug.LogError("WebCamTexture is null");
-            }
-            else
-            {
-                Debug.Log("WebCamTexture is not null");
-            }
-
-            if (obfuscationTypes == null)
-            {
-                Debug.LogError("obfuscationTypes is null");
-            }
-            else
-            {
-                Debug.Log("obfuscationTypes is not null");
-            }
-
             obfuscatedTexture = imgObfuscator.Run(webCamTexture, obfuscationTypes);
 
             stopwatch1.Stop();
+            
             Debug.Log("Total time: " + stopwatch1.ElapsedMilliseconds + "ms");
             // ImageWriter.WriteTexture2DToPNG(obfuscatedTexture, "Assets/DebugOutputs/obfuscated.png");
             display.texture = obfuscatedTexture;
