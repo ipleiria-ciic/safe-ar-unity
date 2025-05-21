@@ -139,6 +139,24 @@ Upon completion of the obfuscation process, the module generates the obfuscated 
 
 <TO BE COMPLETED> -->
 
+## Citation 
+
+If you use any piece of the code available in this repository, please cite the following paper:
+
+```bibtex
+@InProceedings{10.1007/978-3-031-81713-7_13,
+author="Ribeiro, Tiago and Marto, Anabela and Gon{\c{c}}alves, Alexandrino and Santos, Leonel and Rabad{\~a}o, Carlos and de C. Costa, Rog{\'e}rio Lu{\'i}s",
+title="SafeARUnity: Real-Time Image Processing to Enhance Privacy Protection in LBARGs",
+booktitle="Videogame Sciences and Arts",
+year="2025",
+publisher="Springer Nature Switzerland",
+address="Cham",
+pages="186--200",
+isbn="978-3-031-81713-7",
+doi="10.1007/978-3-031-81713-7_13"
+}
+```
+
 
 ## Future Work
 
